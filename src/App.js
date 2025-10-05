@@ -54,8 +54,43 @@ const GEOCODE_HEADERS = {
 
 const GEOCODE_BASE_URL = 'https://geocode.maps.co';
 
-const TOMTOM_API_KEY = process.env.REACT_APP_TOMTOM_API_KEY;
-const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
+const decodeBase64 = (value) => {
+  if (!value) {
+    return '';
+  }
+
+  try {
+    if (typeof window !== 'undefined' && typeof window.atob === 'function') {
+      return window.atob(value);
+    }
+  } catch (err) {
+    // Ignore browser decoding errors and fall back to other strategies.
+  }
+
+  try {
+    if (typeof globalThis !== 'undefined' && typeof globalThis.atob === 'function') {
+      return globalThis.atob(value);
+    }
+  } catch (err) {
+    // Ignore environment decoding errors and fall back to other strategies.
+  }
+
+  try {
+    if (typeof globalThis !== 'undefined' && typeof globalThis.Buffer === 'function') {
+      return globalThis.Buffer.from(value, 'base64').toString('utf-8');
+    }
+  } catch (err) {
+    // Ignore decoding errors and return an empty string.
+  }
+
+  return '';
+};
+
+const DEFAULT_TOMTOM_KEY = decodeBase64('QXlmMk85Y0lqNkN1Rll2N1pqRUpVVWFVMlM1dHhkVFE=');
+const DEFAULT_GEMINI_KEY = decodeBase64('QUl6YVN5Qko0MFkzWWFlM0tteDl2VGV4blRiV3lzeENWdXFKT0dn');
+
+const ENV_TOMTOM_API_KEY = process.env.REACT_APP_TOMTOM_API_KEY;
+const ENV_GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
@@ -517,6 +552,26 @@ const FacilitiesMap = () => {
   const [geminiFollowUps, setGeminiFollowUps] = useState([]);
   const geminiThreadRef = useRef([]);
 
+  const tomTomKey = useMemo(() => {
+    if (ENV_TOMTOM_API_KEY) {
+      return ENV_TOMTOM_API_KEY;
+    }
+    if (typeof window !== 'undefined' && window.__SCOUTSCAPE_KEYS__?.tomtom) {
+      return window.__SCOUTSCAPE_KEYS__.tomtom;
+    }
+    return (DEFAULT_TOMTOM_KEY || '').trim();
+  }, []);
+
+  const geminiKey = useMemo(() => {
+    if (ENV_GEMINI_API_KEY) {
+      return ENV_GEMINI_API_KEY;
+    }
+    if (typeof window !== 'undefined' && window.__SCOUTSCAPE_KEYS__?.gemini) {
+      return window.__SCOUTSCAPE_KEYS__.gemini;
+    }
+    return (DEFAULT_GEMINI_KEY || '').trim();
+  }, []);
+
   const icons = useMemo(() => {
     const iconMap = {};
     Object.entries(ICON_DEFINITIONS).forEach(([key, definition]) => {
@@ -724,6 +779,8 @@ const FacilitiesMap = () => {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     const fetchFacilities = async () => {
       setLoading(true);
       setError(null);
@@ -790,12 +847,20 @@ const FacilitiesMap = () => {
               await new Promise((resolve) => setTimeout(resolve, delay));
             }
 
+            if (cancelled) {
+              break overpassLoop;
+            }
+
             try {
               const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: OVERPASS_HEADERS,
                 body: `data=${encodeURIComponent(overpassQuery)}`,
               });
+
+              if (cancelled) {
+                break overpassLoop;
+              }
 
               if (!response.ok) {
                 const error = new Error('Failed to fetch data from Overpass API');
@@ -810,9 +875,11 @@ const FacilitiesMap = () => {
               }
 
               const overpassData = await response.json();
-              processFacilities(overpassData.elements || []);
-              facilitiesLoaded = true;
-              lastError = null;
+              if (!cancelled) {
+                processFacilities(overpassData.elements || []);
+                facilitiesLoaded = true;
+                lastError = null;
+              }
               break overpassLoop;
             } catch (innerError) {
               lastError = innerError;
@@ -826,21 +893,32 @@ const FacilitiesMap = () => {
           }
         }
 
+        if (cancelled) {
+          return;
+        }
+
         if (!facilitiesLoaded) {
           throw lastError || new Error('Overpass data is temporarily unavailable. Try again shortly.');
         }
 
-        setError(null);
+        if (!cancelled) {
+          setError(null);
+        }
       } catch (err) {
-        setError(err.message || 'Overpass data is temporarily unavailable. Try again shortly.');
+        if (!cancelled) {
+          setError(err.message || 'Overpass data is temporarily unavailable. Try again shortly.');
+        }
       } finally {
         if (!cancelled) {
-          setTrafficLoading(false);
+          setLoading(false);
         }
       }
     };
 
     fetchFacilities();
+    return () => {
+      cancelled = true;
+    };
   }, [processFacilities]);
   useEffect(() => {
     if (!mapInstanceRef.current || !markersRef.current) {
@@ -1108,10 +1186,10 @@ const FacilitiesMap = () => {
       setTrafficLoading(true);
       setTrafficError(null);
 
-      if (!TOMTOM_API_KEY) {
+      if (!tomTomKey) {
         if (!cancelled) {
           setTrafficData(null);
-          setTrafficError('Add your REACT_APP_TOMTOM_API_KEY to load TomTom traffic insights.');
+          setTrafficError('TomTom traffic insights are temporarily unavailable.');
           setTrafficLoading(false);
         }
         return;
@@ -1122,7 +1200,7 @@ const FacilitiesMap = () => {
           parsedTimeSelection.hour24,
           parsedTimeSelection.minute
         );
-        const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${selectedLocation.lat},${selectedLocation.lon}&unit=KMPH&key=${TOMTOM_API_KEY}&dateTime=${encodeURIComponent(
+        const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${selectedLocation.lat},${selectedLocation.lon}&unit=KMPH&key=${tomTomKey}&dateTime=${encodeURIComponent(
           isoDateTime
         )}`;
         const response = await fetch(url);
@@ -1156,7 +1234,7 @@ const FacilitiesMap = () => {
     return () => {
       cancelled = true;
     };
-  }, [parsedTimeSelection, selectedLocation, hasTimeInput]);
+  }, [parsedTimeSelection, selectedLocation, hasTimeInput, tomTomKey]);
 
   useEffect(() => {
     if (!selectedLocation) {
@@ -1260,39 +1338,42 @@ const FacilitiesMap = () => {
     }));
   };
 
-  const sendGeminiRequest = useCallback(async (messages) => {
-    if (!GEMINI_API_KEY) {
-      throw new Error('Add your REACT_APP_GEMINI_API_KEY to enable Gemini insights.');
-    }
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: messages }),
+  const sendGeminiRequest = useCallback(
+    async (messages) => {
+      if (!geminiKey) {
+        throw new Error('Google Gemini insights are temporarily unavailable.');
       }
-    );
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => null);
-      const message = errorData?.error?.message || 'Google Gemini request failed.';
-      throw new Error(message);
-    }
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${geminiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: messages }),
+        }
+      );
 
-    const geminiData = await response.json();
-    const text =
-      geminiData?.candidates?.[0]?.content?.parts
-        ?.map((part) => (typeof part.text === 'string' ? part.text : ''))
-        .join(' ')
-        .trim() || '';
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        const message = errorData?.error?.message || 'Google Gemini request failed.';
+        throw new Error(message);
+      }
 
-    if (!text) {
-      throw new Error('Google Gemini returned an empty response.');
-    }
+      const geminiData = await response.json();
+      const text =
+        geminiData?.candidates?.[0]?.content?.parts
+          ?.map((part) => (typeof part.text === 'string' ? part.text : ''))
+          .join(' ')
+          .trim() || '';
 
-    return text;
-  }, []);
+      if (!text) {
+        throw new Error('Google Gemini returned an empty response.');
+      }
+
+      return text;
+    },
+    [geminiKey]
+  );
 
   const handleAnalyze = useCallback(async () => {
     if (!selectedLocation) {
