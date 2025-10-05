@@ -136,6 +136,78 @@ const ICON_DEFINITIONS = {
 
 const describeWeather = (code) => WEATHER_CODE_SUMMARY[code] || 'Conditions unavailable';
 
+const parseTimeInput = (hourValue, minuteValue, periodValue) => {
+  const hour = parseInt(hourValue, 10);
+  const minute = parseInt(minuteValue, 10);
+
+  if (Number.isNaN(hour) || Number.isNaN(minute)) {
+    return null;
+  }
+
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) {
+    return null;
+  }
+
+  const normalizedPeriod = periodValue === 'AM' ? 'AM' : 'PM';
+  let hour24 = hour % 12;
+
+  if (normalizedPeriod === 'PM') {
+    hour24 += 12;
+  }
+
+  if (normalizedPeriod === 'AM' && hour === 12) {
+    hour24 = 0;
+  }
+
+  return {
+    hour12: hour,
+    hour24,
+    minute,
+    minutePadded: minute.toString().padStart(2, '0'),
+    period: normalizedPeriod,
+  };
+};
+
+const describeTrafficLevel = (data) => {
+  if (!data || typeof data.currentSpeed !== 'number' || typeof data.freeFlowSpeed !== 'number') {
+    return 'Unavailable';
+  }
+
+  if (data.currentSpeed <= 0 || data.freeFlowSpeed <= 0) {
+    return 'Unavailable';
+  }
+
+  const ratio = data.currentSpeed / data.freeFlowSpeed;
+
+  if (ratio >= 0.8) {
+    return 'Light traffic';
+  }
+
+  if (ratio >= 0.55) {
+    return 'Moderate traffic';
+  }
+
+  return 'Heavy congestion';
+};
+
+const formatTrafficDelay = (data) => {
+  if (!data || typeof data.currentTravelTime !== 'number' || typeof data.freeFlowTravelTime !== 'number') {
+    return '—';
+  }
+
+  const delaySeconds = Math.max(data.currentTravelTime - data.freeFlowTravelTime, 0);
+
+  if (delaySeconds >= 60) {
+    const minutes = delaySeconds / 60;
+    if (minutes >= 10) {
+      return `${Math.round(minutes)} min`;
+    }
+    return `${minutes.toFixed(1)} min`;
+  }
+
+  return `${Math.round(delaySeconds)} sec`;
+};
+
 const toCardinal = (degrees) => {
   if (typeof degrees !== 'number' || Number.isNaN(degrees)) {
     return 'N/A';
@@ -230,16 +302,6 @@ const categorizeFacility = (tags = {}, elementType) => {
   return Array.from(categories);
 };
 
-const parsePositiveInteger = (value) => {
-  if (value === '' || value === null || value === undefined) {
-    return 0;
-  }
-  const parsed = parseInt(value, 10);
-  if (Number.isNaN(parsed) || parsed < 0) {
-    return 0;
-  }
-  return parsed;
-};
 const FacilitiesMap = () => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
@@ -252,11 +314,10 @@ const FacilitiesMap = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [address, setAddress] = useState('');
-  const [latitude, setLatitude] = useState('');
-  const [longitude, setLongitude] = useState('');
   const [radius, setRadius] = useState(250);
-  const [timeWindowDays, setTimeWindowDays] = useState('');
-  const [timeWindowHours, setTimeWindowHours] = useState('');
+  const [timeHour, setTimeHour] = useState('');
+  const [timeMinute, setTimeMinute] = useState('');
+  const [timePeriod, setTimePeriod] = useState('PM');
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [facilityData, setFacilityData] = useState(() => createEmptyFacilityState());
   const [stats, setStats] = useState(() => createZeroStats());
@@ -274,6 +335,9 @@ const FacilitiesMap = () => {
   const [locationError, setLocationError] = useState(null);
   const [geocoding, setGeocoding] = useState(false);
   const [weather, setWeather] = useState(null);
+  const [trafficData, setTrafficData] = useState(null);
+  const [trafficLoading, setTrafficLoading] = useState(false);
+  const [trafficError, setTrafficError] = useState(null);
 
   const icons = useMemo(() => {
     const iconMap = {};
@@ -309,6 +373,15 @@ const FacilitiesMap = () => {
 
   const topFacilities = useMemo(() => nearbyFacilities.slice(0, 20), [nearbyFacilities]);
 
+  const parsedTimeSelection = useMemo(
+    () => parseTimeInput(timeHour, timeMinute, timePeriod),
+    [timeHour, timeMinute, timePeriod]
+  );
+
+  const hasTimeInput = timeHour !== '' || timeMinute !== '';
+
+  const trafficStatus = useMemo(() => describeTrafficLevel(trafficData), [trafficData]);
+
   const isWithinVancouver = useCallback((lat, lon) => {
     if (typeof lat !== 'number' || typeof lon !== 'number' || Number.isNaN(lat) || Number.isNaN(lon)) {
       return false;
@@ -323,13 +396,6 @@ const FacilitiesMap = () => {
 
   useEffect(() => {
     selectedLocationRef.current = selectedLocation;
-    if (selectedLocation) {
-      setLatitude(selectedLocation.lat.toFixed(6));
-      setLongitude(selectedLocation.lon.toFixed(6));
-    } else {
-      setLatitude('');
-      setLongitude('');
-    }
   }, [selectedLocation]);
 
   useEffect(() => {
@@ -732,6 +798,83 @@ const FacilitiesMap = () => {
 
   useEffect(() => {
     if (!selectedLocation) {
+      setTrafficData(null);
+      setTrafficError(null);
+      setTrafficLoading(false);
+      return;
+    }
+
+    if (!hasTimeInput) {
+      setTrafficData(null);
+      setTrafficError(null);
+      setTrafficLoading(false);
+      return;
+    }
+
+    if (!parsedTimeSelection) {
+      setTrafficData(null);
+      setTrafficLoading(false);
+      setTrafficError('Enter a valid time to check TomTom traffic.');
+      return;
+    }
+
+    const apiKey = process.env.REACT_APP_TOMTOM_API_KEY;
+
+    if (!apiKey) {
+      setTrafficData(null);
+      setTrafficLoading(false);
+      setTrafficError('Add your REACT_APP_TOMTOM_API_KEY to load TomTom traffic insights.');
+      return;
+    }
+
+    let cancelled = false;
+
+    const fetchTraffic = async () => {
+      setTrafficLoading(true);
+      setTrafficError(null);
+
+      try {
+        const targetDate = new Date();
+        targetDate.setHours(parsedTimeSelection.hour24, parsedTimeSelection.minute, 0, 0);
+        const isoDateTime = targetDate.toISOString();
+        const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${selectedLocation.lat},${selectedLocation.lon}&unit=KMPH&key=${apiKey}&dateTime=${encodeURIComponent(
+          isoDateTime
+        )}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error('Traffic data unavailable at the moment.');
+        }
+        const data = await response.json();
+        if (!cancelled) {
+          if (data?.flowSegmentData) {
+            setTrafficData(data.flowSegmentData);
+            setTrafficError(null);
+          } else {
+            setTrafficData(null);
+            setTrafficError('No TomTom traffic data returned for this area.');
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setTrafficData(null);
+          setTrafficError(err.message || 'Unable to load TomTom traffic right now.');
+        }
+      } finally {
+        if (!cancelled) {
+          setTrafficLoading(false);
+        }
+      }
+    };
+
+    fetchTraffic();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [parsedTimeSelection, selectedLocation, hasTimeInput]);
+
+  useEffect(() => {
+    if (!selectedLocation) {
       return;
     }
 
@@ -803,41 +946,6 @@ const FacilitiesMap = () => {
     }
   };
 
-  const handleCoordinateApply = () => {
-    if (latitude === '' || longitude === '') {
-      setLocationError('Enter both latitude and longitude values.');
-      return;
-    }
-
-    const lat = parseFloat(latitude);
-    const lon = parseFloat(longitude);
-
-    if (Number.isNaN(lat) || Number.isNaN(lon)) {
-      setLocationError('Coordinates must be valid decimal numbers.');
-      return;
-    }
-
-    if (!isWithinVancouver(lat, lon)) {
-      setLocationError('Coordinates must fall within Vancouver, BC.');
-      return;
-    }
-
-    setSelectedLocation({ lat, lon });
-    setLocationError(null);
-  };
-
-  const handleClearLocation = () => {
-    setSelectedLocation(null);
-    setLatitude('');
-    setLongitude('');
-    setAddress('');
-    setWeather(null);
-    setNearbyFacilities([]);
-    setStats(createZeroStats());
-    setAddressError(null);
-    setLocationError(null);
-  };
-
   const toggleLayer = (category) => {
     setVisibleLayers((prev) => ({
       ...prev,
@@ -874,38 +982,33 @@ const FacilitiesMap = () => {
             }
           : null;
 
+      const timeSnapshot = parsedTimeSelection
+        ? { ...parsedTimeSelection }
+        : null;
+
       setAnalysisResult({
         total,
         radius,
-        timeWindow: {
-          days: parsePositiveInteger(timeWindowDays),
-          hours: parsePositiveInteger(timeWindowHours),
-        },
+        timeSelection: timeSnapshot,
         busiest,
       });
     }, 900);
   };
 
-  const timeWindowSummary = (result) => {
-    if (!result) {
+  const timeSelectionSummary = (result) => {
+    if (!result || !result.timeSelection) {
       return 'Not specified';
     }
-    const parts = [];
-    if (result.timeWindow.days) {
-      parts.push(`${result.timeWindow.days} day${result.timeWindow.days === 1 ? '' : 's'}`);
-    }
-    if (result.timeWindow.hours) {
-      parts.push(`${result.timeWindow.hours} hour${result.timeWindow.hours === 1 ? '' : 's'}`);
-    }
-    return parts.length ? parts.join(' ') : 'Not specified';
+    const { hour12, minutePadded, period } = result.timeSelection;
+    return `${hour12}:${minutePadded} ${period}`;
   };
 
   return (
     <div className="app-container">
       <header className="app-header">
         <div>
-          <h1>Vancouver Scout Intelligence</h1>
-          <p>Plan film locations by spotting nearby noise sources and live conditions across Vancouver, BC.</p>
+          <h1>ScoutScape</h1>
+          <p>Scout Vancouver film locations with nearby noise sources, TomTom traffic, and live conditions.</p>
         </div>
       </header>
 
@@ -945,45 +1048,6 @@ const FacilitiesMap = () => {
             </form>
             {addressError && <p className="input-error">{addressError}</p>}
 
-            <label className="field-label">Coordinates</label>
-            <div className="coordinate-group">
-              <div className="coordinate-field">
-                <span>Lat</span>
-                <input
-                  type="text"
-                  placeholder="e.g. 49.2827"
-                  value={latitude}
-                  onChange={(event) => {
-                    setLatitude(event.target.value);
-                    if (locationError) {
-                      setLocationError(null);
-                    }
-                  }}
-                />
-              </div>
-              <div className="coordinate-field">
-                <span>Long</span>
-                <input
-                  type="text"
-                  placeholder="e.g. -123.1207"
-                  value={longitude}
-                  onChange={(event) => {
-                    setLongitude(event.target.value);
-                    if (locationError) {
-                      setLocationError(null);
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            <div className="location-actions">
-              <button type="button" className="secondary-button" onClick={handleCoordinateApply}>
-                Use coordinates
-              </button>
-              <button type="button" className="ghost-button" onClick={handleClearLocation}>
-                Clear
-              </button>
-            </div>
             {locationError && <p className="input-error">{locationError}</p>}
             <p className="helper-text">Click on the map or drag the marker to refine the scouting pin.</p>
 
@@ -1000,32 +1064,57 @@ const FacilitiesMap = () => {
               <span>{radius}</span>
             </div>
 
-            <label className="field-label">Time window</label>
-            <div className="time-window-inputs">
-              <div className="time-input-field">
-                <span>Days</span>
+            <label className="field-label">Traffic check time</label>
+            <div className="time-entry">
+              <div className="time-entry-fields">
                 <input
-                  type="number"
-                  min="0"
-                  placeholder="0"
-                  value={timeWindowDays}
-                  onChange={(event) => setTimeWindowDays(event.target.value)}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
+                  placeholder="hh"
+                  value={timeHour}
+                  onChange={(event) => {
+                    const value = event.target.value.replace(/[^0-9]/g, '').slice(0, 2);
+                    setTimeHour(value);
+                  }}
+                />
+                <span className="time-separator">:</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={2}
+                  placeholder="mm"
+                  value={timeMinute}
+                  onChange={(event) => {
+                    const value = event.target.value.replace(/[^0-9]/g, '').slice(0, 2);
+                    setTimeMinute(value);
+                  }}
                 />
               </div>
-              <div className="time-input-field">
-                <span>Hours</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="23"
-                  placeholder="0"
-                  value={timeWindowHours}
-                  onChange={(event) => setTimeWindowHours(event.target.value)}
-                />
+              <div className="time-period-toggle" role="group" aria-label="Select AM or PM">
+                <button
+                  type="button"
+                  className={`period-button ${timePeriod === 'AM' ? 'active' : ''}`}
+                  aria-pressed={timePeriod === 'AM'}
+                  onClick={() => setTimePeriod('AM')}
+                >
+                  AM
+                </button>
+                <button
+                  type="button"
+                  className={`period-button ${timePeriod === 'PM' ? 'active' : ''}`}
+                  aria-pressed={timePeriod === 'PM'}
+                  onClick={() => setTimePeriod('PM')}
+                >
+                  PM
+                </button>
               </div>
             </div>
+            {(timeHour !== '' || timeMinute !== '') && !parsedTimeSelection && (
+              <p className="input-error">Enter a valid Vancouver time between 1-12 hours and 0-59 minutes.</p>
+            )}
             <p className="helper-text helper-text--muted">
-              Set the scouting window to note day/night shoots and weekend work.
+              Choose a local time to review TomTom traffic around your scouting pin.
             </p>
 
             <button onClick={handleAnalyze} disabled={analyzing} className="analyze-button">
@@ -1131,6 +1220,67 @@ const FacilitiesMap = () => {
           </div>
 
           <div className="insight-grid">
+            <div className="traffic-card">
+              <h3>TomTom traffic</h3>
+              {selectedLocation ? (
+                trafficLoading ? (
+                  <div className="traffic-loading">
+                    <div className="spinner"></div>
+                    <span>Loading TomTom traffic…</span>
+                  </div>
+                ) : trafficError ? (
+                  <p className="traffic-message traffic-message--error">{trafficError}</p>
+                ) : trafficData ? (
+                  <>
+                    {trafficStatus !== 'Unavailable' && (
+                      <p className="traffic-status">{trafficStatus}</p>
+                    )}
+                    <div className="traffic-grid">
+                      <div className="traffic-metric">
+                        <span className="traffic-label">Speed now</span>
+                        <span className="traffic-value">
+                          {typeof trafficData.currentSpeed === 'number'
+                            ? `${Math.round(trafficData.currentSpeed)} km/h`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="traffic-metric">
+                        <span className="traffic-label">Free flow</span>
+                        <span className="traffic-value">
+                          {typeof trafficData.freeFlowSpeed === 'number'
+                            ? `${Math.round(trafficData.freeFlowSpeed)} km/h`
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="traffic-metric">
+                        <span className="traffic-label">Delay</span>
+                        <span className="traffic-value">{formatTrafficDelay(trafficData)}</span>
+                      </div>
+                      <div className="traffic-metric">
+                        <span className="traffic-label">Confidence</span>
+                        <span className="traffic-value">
+                          {typeof trafficData.confidence === 'number'
+                            ? `${Math.round(Math.min(Math.max(trafficData.confidence, 0), 1) * 100)}%`
+                            : '—'}
+                        </span>
+                      </div>
+                    </div>
+                    {trafficData.roadClosure && (
+                      <p className="traffic-message traffic-message--warning">
+                        TomTom reports a road closure in this segment.
+                      </p>
+                    )}
+                  </>
+                ) : hasTimeInput ? (
+                  <p className="traffic-message">TomTom returned no flow data for this time.</p>
+                ) : (
+                  <p className="traffic-message">Enter a Vancouver time to load TomTom traffic for this area.</p>
+                )
+              ) : (
+                <p className="traffic-message">Select a Vancouver location to unlock TomTom traffic insights.</p>
+              )}
+            </div>
+
             <div className="weather-card">
               <h3>Current conditions</h3>
               {weather ? (
@@ -1172,14 +1322,14 @@ const FacilitiesMap = () => {
                     </p>
                     <ul className="analysis-summary">
                       <li>Radius: {analysisResult.radius} m</li>
-                      <li>Time frame: {timeWindowSummary(analysisResult)}</li>
+                      <li>Traffic time: {timeSelectionSummary(analysisResult)}</li>
                       <li>Categories monitored: {CATEGORY_CONFIG.length}</li>
                     </ul>
                   </>
                 ) : (
                   <p>
                     Run the sound analysis to generate an overview of notable facilities within the selected
-                    radius and time window.
+                    radius and traffic snapshot time.
                   </p>
                 )}
               </div>

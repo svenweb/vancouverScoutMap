@@ -3,7 +3,8 @@ import App from './App';
 
 test('renders scouting interface controls', () => {
   render(<App />);
-  expect(screen.getByText(/Vancouver Scout Intelligence/i)).toBeInTheDocument();
+  expect(screen.getByText(/ScoutScape/i)).toBeInTheDocument();
   expect(screen.getByText(/Add location/i)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Find in Vancouver/i })).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: /TomTom traffic/i })).toBeInTheDocument();
 });
