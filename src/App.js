@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import './App.css';
 
 // Fix for default marker icons in Leaflet with bundlers
 delete L.Icon.Default.prototype._getIconUrl;
@@ -27,6 +28,11 @@ const FacilitiesMap = () => {
     other_schools: true,
   });
   const [analyzing, setAnalyzing] = useState(false);
+  const [address, setAddress] = useState('');
+  const [latitude, setLatitude] = useState('');
+  const [longitude, setLongitude] = useState('');
+  const [radius, setRadius] = useState(200);
+  const [timeWindow, setTimeWindow] = useState('day');
 
   // Custom icons for different facility types
   const icons = useMemo(() => ({
@@ -320,24 +326,27 @@ const FacilitiesMap = () => {
   };
 
   return (
-    <div style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ 
-        padding: '16px', 
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        color: 'white',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+    <div style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', background: '#f1f5f9' }}>
+      <div style={{
+        padding: '20px 24px',
+        background: '#ffffff',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px',
+        boxShadow: '0 2px 12px rgba(15, 23, 42, 0.08)',
+        borderBottom: '1px solid #e2e8f0'
       }}>
-        <h1 style={{ margin: '0 0 8px 0', fontSize: '24px' }}>Vancouver Facilities Map</h1>
-        <p style={{ margin: 0, fontSize: '14px', opacity: 0.9 }}>
-          Interactive map showing hospitals, emergency services, airports, and schools
+        <h1 style={{ margin: 0, fontSize: '24px', color: '#0f172a' }}>Vancouver Facilities Map</h1>
+        <p style={{ margin: 0, fontSize: '14px', color: '#475569' }}>
+          Explore emergency services, hospitals, airports, and schools across the city
         </p>
       </div>
 
       {loading && (
-        <div style={{ 
-          padding: '16px', 
-          background: '#3b82f6', 
-          color: 'white', 
+        <div style={{
+          padding: '12px 24px',
+          background: '#3b82f6',
+          color: 'white',
           textAlign: 'center',
           fontSize: '14px'
         }}>
@@ -346,10 +355,10 @@ const FacilitiesMap = () => {
       )}
 
       {error && (
-        <div style={{ 
-          padding: '16px', 
-          background: '#ef4444', 
-          color: 'white', 
+        <div style={{
+          padding: '12px 24px',
+          background: '#ef4444',
+          color: 'white',
           textAlign: 'center',
           fontSize: '14px'
         }}>
@@ -357,138 +366,145 @@ const FacilitiesMap = () => {
         </div>
       )}
 
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <div style={{ 
-          width: '280px', 
-          padding: '16px', 
-          background: '#f8fafc',
-          overflowY: 'auto',
-          borderRight: '1px solid #e2e8f0'
-        }}>
-          <h2 style={{ margin: '0 0 16px 0', fontSize: '18px', color: '#1e293b' }}>Analysis Tools</h2>
-          
-          <button
-            onClick={handleAnalyze}
-            disabled={analyzing}
-            style={{
-              width: '100%',
-              padding: '12px 16px',
-              background: analyzing ? '#94a3b8' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: '600',
-              cursor: analyzing ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s',
-              marginBottom: '16px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px'
-            }}
-          >
-            {analyzing ? (
-              <>
-                <div style={{
-                  width: '16px',
-                  height: '16px',
-                  border: '2px solid #ffffff40',
-                  borderTop: '2px solid #ffffff',
-                  borderRadius: '50%',
-                  animation: 'spin 1s linear infinite'
-                }}></div>
-                Analyzing...
-              </>
-            ) : (
-              'Analyze Facilities'
-            )}
-          </button>
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden', padding: '24px', gap: '24px' }}>
+        <div className="sidebar-panel">
+          <div className="sidebar-card">
+            <h2>Add location</h2>
 
-          <div style={{ 
-            marginTop: '16px', 
-            padding: '12px', 
-            background: 'white', 
-            borderRadius: '8px',
-            fontSize: '12px',
-            color: '#64748b'
-          }}>
-            <strong style={{ color: '#1e293b' }}>Total Facilities:</strong> {Object.values(stats).reduce((a, b) => a + b, 0)}
-            <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #e2e8f0' }}>
-              Data from OpenStreetMap via Overpass API
+            <label className="field-label">Address or place</label>
+            <div className="input-wrapper">
+              <input
+                type="text"
+                placeholder="Search address or drag a pin..."
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+              />
             </div>
+
+            <label className="field-label">Coordinates</label>
+            <div className="coordinate-group">
+              <div className="coordinate-field">
+                <span>Lat</span>
+                <input
+                  type="text"
+                  placeholder="e.g. 49.2827"
+                  value={latitude}
+                  onChange={(e) => setLatitude(e.target.value)}
+                />
+              </div>
+              <div className="coordinate-field">
+                <span>Long</span>
+                <input
+                  type="text"
+                  placeholder="e.g. -123.1207"
+                  value={longitude}
+                  onChange={(e) => setLongitude(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <label className="field-label">Radius (m)</label>
+            <div className="radius-control">
+              <input
+                type="range"
+                min="50"
+                max="1000"
+                step="10"
+                value={radius}
+                onChange={(e) => setRadius(parseInt(e.target.value, 10))}
+              />
+              <span>{radius}</span>
+            </div>
+
+            <label className="field-label">Time window</label>
+            <div className="time-window">
+              {['day', 'night', 'custom'].map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={`time-window-option ${timeWindow === option ? 'active' : ''}`}
+                  onClick={() => setTimeWindow(option)}
+                >
+                  {option === 'day' && 'Day'}
+                  {option === 'night' && 'Night'}
+                  {option === 'custom' && 'Custom'}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing}
+              className="analyze-button"
+            >
+              {analyzing ? (
+                <>
+                  <div className="spinner"></div>
+                  Analyzing...
+                </>
+              ) : (
+                'Analyze sound'
+              )}
+            </button>
+          </div>
+
+          <div className="sidebar-stats">
+            <div>
+              <span className="stats-label">Total Facilities</span>
+              <span className="stats-value">{Object.values(stats).reduce((a, b) => a + b, 0)}</span>
+            </div>
+            <p>Data from OpenStreetMap via Overpass API</p>
           </div>
         </div>
 
-        <div style={{ flex: 1, position: 'relative' }}>
-          <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
-          
-          {/* Layer Controls in top-right corner */}
-          <div style={{
-            position: 'absolute',
-            top: '16px',
-            right: '16px',
-            background: 'white',
-            borderRadius: '8px',
-            padding: '12px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-            zIndex: 1000,
-            minWidth: '200px'
-          }}>
-            <h3 style={{ 
-              margin: '0 0 12px 0', 
-              fontSize: '14px', 
-              color: '#1e293b',
-              fontWeight: '600'
-            }}>
-              Layer Controls
-            </h3>
-            
-            {Object.keys(visibleLayers).map(category => (
-              <div 
-                key={category}
-                onClick={() => toggleLayer(category)}
-                style={{
-                  padding: '8px',
-                  marginBottom: '6px',
-                  background: visibleLayers[category] ? '#f8fafc' : 'transparent',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  border: `1px solid ${visibleLayers[category] ? categoryColors[category] : '#e2e8f0'}`,
-                  transition: 'all 0.2s',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <div style={{
-                    width: '12px',
-                    height: '12px',
-                    borderRadius: '50%',
-                    background: categoryColors[category],
-                    opacity: visibleLayers[category] ? 1 : 0.3,
-                  }}></div>
-                  <span style={{ 
-                    fontSize: '12px', 
-                    fontWeight: visibleLayers[category] ? '600' : '400',
-                    color: visibleLayers[category] ? '#1e293b' : '#64748b'
-                  }}>
-                    {categoryLabels[category]}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <div className="map-shell">
+            <div ref={mapRef} className="map-instance" />
+            <div className="map-grid-overlay"></div>
+            <div className="map-radar map-radar--outer"></div>
+            <div className="map-radar map-radar--middle"></div>
+            <div className="map-radar map-radar--inner"></div>
+            <div className="map-radar-dot"></div>
+
+            <div className="map-layer-controls">
+              <h3>Layer Controls</h3>
+              {Object.keys(visibleLayers).map(category => (
+                <div
+                  key={category}
+                  onClick={() => toggleLayer(category)}
+                  className={`layer-item ${visibleLayers[category] ? 'active' : ''}`}
+                  style={{ borderColor: visibleLayers[category] ? categoryColors[category] : '#e2e8f0' }}
+                >
+                  <div className="layer-label">
+                    <div
+                      className="layer-color"
+                      style={{ background: categoryColors[category], opacity: visibleLayers[category] ? 1 : 0.3 }}
+                    ></div>
+                    <span>{categoryLabels[category]}</span>
+                  </div>
+                  <span
+                    className="layer-count"
+                    style={{ color: categoryColors[category], background: `${categoryColors[category]}20` }}
+                  >
+                    {stats[category] || 0}
                   </span>
                 </div>
-                <span style={{
-                  fontSize: '11px',
-                  fontWeight: '600',
-                  color: categoryColors[category],
-                  background: `${categoryColors[category]}20`,
-                  padding: '2px 6px',
-                  borderRadius: '10px'
-                }}>
-                  {stats[category] || 0}
-                </span>
-              </div>
-            ))}
+              ))}
+            </div>
+          </div>
+
+          <div className="report-card">
+            <div>
+              <h3>Report summary</h3>
+              <p>
+                Run the sound analysis to generate an overview of notable facilities within the selected
+                radius and time window.
+              </p>
+            </div>
+            <div className="report-actions">
+              <button type="button" className="outline-button">Export PDF</button>
+              <button type="button" className="primary-button">Save to Project</button>
+            </div>
           </div>
         </div>
       </div>
