@@ -273,37 +273,134 @@ const buildGeminiPrompt = ({
   return lines.join('\n');
 };
 
-const extractGeminiSections = (text) => {
-  if (!text) {
-    return { summary: '', equipmentAdvice: '' };
+const stripCodeFences = (value) =>
+  value ? value.replace(/```(?:\w+)?/g, '').trim() : '';
+
+const humanizeAdviceKey = (key) =>
+  key
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase());
+
+const buildAdviceItems = (value) => {
+  if (!value || typeof value !== 'object') {
+    return [];
   }
 
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[0]);
-      return {
-        summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
-        equipmentAdvice:
-          typeof parsed.equipmentAdvice === 'string' ? parsed.equipmentAdvice.trim() : '',
-      };
-    } catch (err) {
-      // fall through to text parsing
+  if (Array.isArray(value)) {
+    return value
+      .map((entry, index) => {
+        if (!entry) {
+          return null;
+        }
+        if (typeof entry === 'string') {
+          return {
+            title: `Recommendation ${index + 1}`,
+            detail: entry.trim(),
+          };
+        }
+        if (typeof entry === 'object') {
+          const [firstKey, firstValue] = Object.entries(entry)[0] || [];
+          return {
+            title: humanizeAdviceKey(firstKey || `Recommendation ${index + 1}`),
+            detail:
+              typeof firstValue === 'string'
+                ? firstValue.trim()
+                : JSON.stringify(firstValue),
+          };
+        }
+        return {
+          title: `Recommendation ${index + 1}`,
+          detail: String(entry),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  return Object.entries(value).map(([key, detail]) => ({
+    title: humanizeAdviceKey(key),
+    detail: typeof detail === 'string' ? detail.trim() : JSON.stringify(detail),
+  }));
+};
+
+const parseGeminiJson = (candidate) => {
+  if (!candidate) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(candidate);
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+  } catch (err) {
+    return null;
+  }
+
+  return null;
+};
+
+const extractGeminiSections = (text) => {
+  if (!text) {
+    return { summary: '', equipmentAdvice: '', adviceItems: [], plainText: '' };
+  }
+
+  const stripped = stripCodeFences(text);
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const codeBlockContent = codeBlockMatch ? codeBlockMatch[1].trim() : null;
+  const plainCandidate = (codeBlockContent || stripped || '').trim();
+
+  const attemptJsonCandidates = [codeBlockContent, stripped, text];
+  let parsed = null;
+  for (const candidate of attemptJsonCandidates) {
+    if (!parsed) {
+      parsed = parseGeminiJson(candidate);
     }
   }
 
-  const lower = text.toLowerCase();
+  if (!parsed) {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    parsed = parseGeminiJson(jsonMatch ? jsonMatch[0] : null);
+  }
+
+  if (parsed) {
+    const summary = typeof parsed.summary === 'string' ? parsed.summary.trim() : '';
+    const adviceSource =
+      parsed.equipmentAdvice ?? parsed.advice ?? parsed.recommendations ?? null;
+    const adviceItems = buildAdviceItems(adviceSource);
+    const equipmentAdvice =
+      typeof adviceSource === 'string'
+        ? adviceSource.trim()
+        : adviceItems.length === 0 && adviceSource != null
+        ? String(adviceSource)
+        : '';
+
+    return {
+      summary,
+      equipmentAdvice,
+      adviceItems,
+      plainText: plainCandidate,
+    };
+  }
+
+  const lower = stripped.toLowerCase();
   const equipmentIndex = lower.indexOf('equipment');
   if (equipmentIndex >= 0) {
     return {
-      summary: text.slice(0, equipmentIndex).trim(),
-      equipmentAdvice: text.slice(equipmentIndex).trim(),
+      summary: stripped.slice(0, equipmentIndex).trim(),
+      equipmentAdvice: stripped.slice(equipmentIndex).trim(),
+      adviceItems: [],
+      plainText: plainCandidate,
     };
   }
 
   return {
-    summary: text.trim(),
+    summary: stripped.trim(),
     equipmentAdvice: '',
+    adviceItems: [],
+    plainText: plainCandidate,
   };
 };
 
@@ -547,6 +644,7 @@ const FacilitiesMap = () => {
   const [trafficError, setTrafficError] = useState(null);
   const [geminiSummary, setGeminiSummary] = useState(null);
   const [geminiAdvice, setGeminiAdvice] = useState(null);
+  const [geminiAdviceItems, setGeminiAdviceItems] = useState([]);
   const [geminiLoading, setGeminiLoading] = useState(false);
   const [geminiError, setGeminiError] = useState(null);
   const [geminiFollowUp, setGeminiFollowUp] = useState('');
@@ -1128,6 +1226,8 @@ const FacilitiesMap = () => {
             source: 'hourly',
           };
         }
+        return;
+      }
 
         if (!selectedWeather && weatherData?.current_weather) {
           selectedWeather = {
@@ -1271,6 +1371,7 @@ const FacilitiesMap = () => {
     setAnalysisResult(null);
     setGeminiSummary(null);
     setGeminiAdvice(null);
+    setGeminiAdviceItems([]);
     setGeminiError(null);
     setGeminiFollowUps([]);
     setGeminiFollowUp('');
@@ -1281,6 +1382,7 @@ const FacilitiesMap = () => {
     setAnalysisResult(null);
     setGeminiSummary(null);
     setGeminiAdvice(null);
+    setGeminiAdviceItems([]);
     setGeminiError(null);
     setGeminiFollowUps([]);
     setGeminiFollowUp('');
@@ -1386,6 +1488,7 @@ const FacilitiesMap = () => {
     setAnalysisResult(null);
     setGeminiSummary(null);
     setGeminiAdvice(null);
+    setGeminiAdviceItems([]);
     setGeminiError(null);
     setGeminiFollowUps([]);
     setGeminiFollowUp('');
@@ -1472,14 +1575,21 @@ const FacilitiesMap = () => {
 
       const userMessage = { role: 'user', parts: [{ text: prompt }] };
       const responseText = await sendGeminiRequest([userMessage]);
-      const { summary, equipmentAdvice } = extractGeminiSections(responseText);
+      const { summary, equipmentAdvice, adviceItems } = extractGeminiSections(responseText);
       setGeminiSummary(
         summary || 'Gemini did not return a written summary for this analysis yet.'
       );
-      setGeminiAdvice(
-        equipmentAdvice ||
+      const normalizedAdviceItems = adviceItems || [];
+      setGeminiAdviceItems(normalizedAdviceItems);
+      if (equipmentAdvice) {
+        setGeminiAdvice(equipmentAdvice);
+      } else if (normalizedAdviceItems.length > 0) {
+        setGeminiAdvice('');
+      } else {
+        setGeminiAdvice(
           'Gemini did not return specific equipment recommendations. Consider bringing standard wind protection and directional microphones.'
-      );
+        );
+      }
       geminiThreadRef.current = [userMessage, { role: 'model', parts: [{ text: responseText }] }];
     } catch (err) {
       setGeminiError(err.message || 'Unable to retrieve Google Gemini summary.');
@@ -1527,12 +1637,23 @@ const FacilitiesMap = () => {
         };
         const responseText = await sendGeminiRequest([...geminiThreadRef.current, userMessage]);
         const trimmedResponse = responseText.trim();
+        const parsedFollowUp = extractGeminiSections(trimmedResponse);
         geminiThreadRef.current = [
           ...geminiThreadRef.current,
           userMessage,
           { role: 'model', parts: [{ text: trimmedResponse }] },
         ];
-        setGeminiFollowUps((prev) => [...prev, { question, answer: trimmedResponse }]);
+        setGeminiFollowUps((prev) => [
+          ...prev,
+          {
+            question,
+            answer: trimmedResponse,
+            summary: parsedFollowUp.summary,
+            advice: parsedFollowUp.equipmentAdvice,
+            adviceItems: parsedFollowUp.adviceItems || [],
+            plainText: parsedFollowUp.plainText,
+          },
+        ]);
         setGeminiFollowUp('');
       } catch (err) {
         setGeminiError(err.message || 'Unable to retrieve follow-up guidance from Google Gemini.');
@@ -1752,15 +1873,57 @@ const FacilitiesMap = () => {
                       <p>{geminiAdvice}</p>
                     </div>
                   )}
+                  {geminiAdviceItems.length > 0 && (
+                    <div className="gemini-section">
+                      <h4>Equipment advice</h4>
+                      <dl className="gemini-advice-list">
+                        {geminiAdviceItems.map((item, itemIndex) => (
+                          <div key={`${item.title}-${itemIndex}`} className="gemini-advice-item">
+                            <dt>{item.title}</dt>
+                            <dd>{item.detail}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  )}
                   {geminiFollowUps.length > 0 && (
                     <div className="gemini-section">
                       <h4>Follow-up guidance</h4>
                       <ul className="gemini-followups">
                         {geminiFollowUps.map((entry, index) => (
-                          <li key={`${index}-${entry.question.slice(0, 12)}`}>
-                            <strong>Scout:</strong> {entry.question}
-                            <br />
-                            <strong>Gemini:</strong> {entry.answer}
+                          <li
+                            key={`${index}-${entry.question.slice(0, 12)}`}
+                            className="gemini-followup-entry"
+                          >
+                            <div className="gemini-followup-question">
+                              <span className="gemini-followup-label">Scout</span>
+                              <p>{entry.question}</p>
+                            </div>
+                            <div className="gemini-followup-answer">
+                              <span className="gemini-followup-label">Gemini</span>
+                              {entry.summary && (
+                                <p className="gemini-followup-summary">{entry.summary}</p>
+                              )}
+                              {entry.adviceItems?.length > 0 ? (
+                                <dl className="gemini-advice-list gemini-advice-list--nested">
+                                  {entry.adviceItems.map((item, itemIndex) => (
+                                    <div
+                                      key={`${item.title}-${itemIndex}`}
+                                      className="gemini-advice-item"
+                                    >
+                                      <dt>{item.title}</dt>
+                                      <dd>{item.detail}</dd>
+                                    </div>
+                                  ))}
+                                </dl>
+                              ) : entry.advice ? (
+                                <p className="gemini-followup-advice">{entry.advice}</p>
+                              ) : entry.plainText ? (
+                                <p className="gemini-followup-advice">{entry.plainText}</p>
+                              ) : (
+                                <p className="gemini-followup-advice">{entry.answer}</p>
+                              )}
+                            </div>
                           </li>
                         ))}
                       </ul>

@@ -544,6 +544,37 @@
   line-height: 1.6;
 }
 
+.gemini-advice-list {
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.gemini-advice-item {
+  margin: 0 0 12px;
+}
+
+.gemini-advice-item:last-child {
+  margin-bottom: 0;
+}
+
+.gemini-advice-item dt {
+  font-weight: 600;
+  font-size: 13px;
+  color: #0f172a;
+  margin: 0;
+}
+
+.gemini-advice-item dd {
+  margin: 4px 0 0;
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.5;
+}
+
+.gemini-advice-list--nested {
+  margin-top: 8px;
+}
+
 .gemini-message {
   margin: 0;
   font-size: 13px;
@@ -571,6 +602,42 @@
   font-size: 13px;
   color: #1f2937;
   line-height: 1.5;
+}
+
+.gemini-followup-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gemini-followup-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #475569;
+  background: #e2e8f0;
+  border-radius: 9999px;
+  padding: 3px 8px;
+}
+
+.gemini-followup-question p,
+.gemini-followup-answer p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #1f2937;
+}
+
+.gemini-followup-summary {
+  font-weight: 500;
+}
+
+.gemini-followup-advice {
+  color: #475569;
 }
 
 .gemini-followup-form {
