@@ -834,7 +834,9 @@ const FacilitiesMap = () => {
       } catch (err) {
         setError(err.message || 'Overpass data is temporarily unavailable. Try again shortly.');
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setTrafficLoading(false);
+        }
       }
     };
 
