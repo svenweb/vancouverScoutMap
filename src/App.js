@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import './App.css';
 
 // Fix for default marker icons in Leaflet with bundlers
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
-  iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
 });
 
 const CATEGORY_CONFIG = [
@@ -51,8 +54,8 @@ const GEOCODE_HEADERS = {
 
 const GEOCODE_BASE_URL = 'https://geocode.maps.co';
 
-const DEFAULT_TOMTOM_API_KEY = 'Ayf2O9cIj6CuFYv7ZjEJUUaU2S5txdTQ';
-const DEFAULT_GEMINI_API_KEY = 'AIzaSyCHEbnuTeXfarDkKTbS5E50YGwMothFQ5g';
+const TOMTOM_API_KEY = process.env.REACT_APP_TOMTOM_API_KEY;
+const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
@@ -806,8 +809,8 @@ const FacilitiesMap = () => {
                 break;
               }
 
-              const data = await response.json();
-              processFacilities(data.elements || []);
+              const overpassData = await response.json();
+              processFacilities(overpassData.elements || []);
               facilitiesLoaded = true;
               lastError = null;
               break overpassLoop;
@@ -831,7 +834,9 @@ const FacilitiesMap = () => {
       } catch (err) {
         setError(err.message || 'Overpass data is temporarily unavailable. Try again shortly.');
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setTrafficLoading(false);
+        }
       }
     };
 
@@ -1005,26 +1010,16 @@ const FacilitiesMap = () => {
         if (!response.ok) {
           throw new Error('Weather data unavailable');
         }
-        const data = await response.json();
-        if (cancelled) {
-          return;
-        }
-        const data = await response.json();
+        const weatherData = await response.json();
         if (cancelled) {
           return;
         }
 
-        const hourlyTimes = data?.hourly?.time || [];
-        const hourlyTemps = data?.hourly?.temperature_2m || [];
-        const hourlyWindSpeeds = data?.hourly?.wind_speed_10m || [];
-        const hourlyWindDirections = data?.hourly?.wind_direction_10m || [];
-        const hourlyWeatherCodes = data?.hourly?.weathercode || [];
-
-        const hourlyTimes = data?.hourly?.time || [];
-        const hourlyTemps = data?.hourly?.temperature_2m || [];
-        const hourlyWindSpeeds = data?.hourly?.wind_speed_10m || [];
-        const hourlyWindDirections = data?.hourly?.wind_direction_10m || [];
-        const hourlyWeatherCodes = data?.hourly?.weathercode || [];
+        const hourlyTimes = weatherData?.hourly?.time || [];
+        const hourlyTemps = weatherData?.hourly?.temperature_2m || [];
+        const hourlyWindSpeeds = weatherData?.hourly?.wind_speed_10m || [];
+        const hourlyWindDirections = weatherData?.hourly?.wind_direction_10m || [];
+        const hourlyWeatherCodes = weatherData?.hourly?.weathercode || [];
 
         const timeTarget = parsedTimeSelection;
         let selectedWeather = null;
@@ -1055,13 +1050,13 @@ const FacilitiesMap = () => {
           };
         }
 
-        if (!selectedWeather && data?.current_weather) {
+        if (!selectedWeather && weatherData?.current_weather) {
           selectedWeather = {
-            temperature: data.current_weather.temperature,
-            windSpeed: data.current_weather.windspeed,
-            windDirection: data.current_weather.winddirection,
-            condition: describeWeather(data.current_weather.weathercode),
-            time: data.current_weather.time,
+            temperature: weatherData.current_weather.temperature,
+            windSpeed: weatherData.current_weather.windspeed,
+            windDirection: weatherData.current_weather.winddirection,
+            condition: describeWeather(weatherData.current_weather.weathercode),
+            time: weatherData.current_weather.time,
             source: 'current',
           };
         }
@@ -1107,30 +1102,37 @@ const FacilitiesMap = () => {
       return;
     }
 
-    const apiKey = process.env.REACT_APP_TOMTOM_API_KEY || DEFAULT_TOMTOM_API_KEY;
-
     let cancelled = false;
 
     const fetchTraffic = async () => {
       setTrafficLoading(true);
       setTrafficError(null);
 
+      if (!TOMTOM_API_KEY) {
+        if (!cancelled) {
+          setTrafficData(null);
+          setTrafficError('Add your REACT_APP_TOMTOM_API_KEY to load TomTom traffic insights.');
+          setTrafficLoading(false);
+        }
+        return;
+      }
+
       try {
         const isoDateTime = createVancouverIsoDateTime(
           parsedTimeSelection.hour24,
           parsedTimeSelection.minute
         );
-        const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${selectedLocation.lat},${selectedLocation.lon}&unit=KMPH&key=${apiKey}&dateTime=${encodeURIComponent(
+        const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${selectedLocation.lat},${selectedLocation.lon}&unit=KMPH&key=${TOMTOM_API_KEY}&dateTime=${encodeURIComponent(
           isoDateTime
         )}`;
         const response = await fetch(url);
         if (!response.ok) {
           throw new Error('Traffic data unavailable at the moment.');
         }
-        const data = await response.json();
+        const trafficJson = await response.json();
         if (!cancelled) {
-          if (data?.flowSegmentData) {
-            setTrafficData(data.flowSegmentData);
+          if (trafficJson?.flowSegmentData) {
+            setTrafficData(trafficJson.flowSegmentData);
             setTrafficError(null);
           } else {
             setTrafficData(null);
@@ -1170,9 +1172,9 @@ const FacilitiesMap = () => {
         if (!response.ok) {
           return;
         }
-        const data = await response.json();
-        if (!cancelled && data?.display_name) {
-          setAddress(data.display_name);
+        const reverseData = await response.json();
+        if (!cancelled && reverseData?.display_name) {
+          setAddress(reverseData.display_name);
         }
       } catch (err) {
         // Ignore reverse geocoding errors silently
@@ -1259,13 +1261,12 @@ const FacilitiesMap = () => {
   };
 
   const sendGeminiRequest = useCallback(async (messages) => {
-    const apiKey = process.env.REACT_APP_GEMINI_API_KEY || DEFAULT_GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error('Google Gemini insights are not available right now.');
+    if (!GEMINI_API_KEY) {
+      throw new Error('Add your REACT_APP_GEMINI_API_KEY to enable Gemini insights.');
     }
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1279,9 +1280,9 @@ const FacilitiesMap = () => {
       throw new Error(message);
     }
 
-    const data = await response.json();
+    const geminiData = await response.json();
     const text =
-      data?.candidates?.[0]?.content?.parts
+      geminiData?.candidates?.[0]?.content?.parts
         ?.map((part) => (typeof part.text === 'string' ? part.text : ''))
         .join(' ')
         .trim() || '';
