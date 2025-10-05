@@ -44,12 +44,20 @@ const VANCOUVER_BOUNDS = {
   maxLon: -123.02,
 };
 
-const NOMINATIM_HEADERS = {
+const GEOCODE_HEADERS = {
   Accept: 'application/json',
   'User-Agent': 'ScoutScape/1.0 (scoutscape.app contact@scoutscape.app)',
 };
 
-const NOMINATIM_VIEWBOX = '-123.26,49.314,-123.022,49.198';
+const GEOCODE_BASE_URL = 'https://geocode.maps.co';
+
+const DEFAULT_TOMTOM_API_KEY = 'Ayf2O9cIj6CuFYv7ZjEJUUaU2S5txdTQ';
+
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
+];
 
 const WEATHER_CODE_SUMMARY = {
   0: 'Clear sky',
@@ -759,22 +767,41 @@ const FacilitiesMap = () => {
       `;
 
       try {
-        const response = await fetch('https://overpass-api.de/api/interpreter', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-          body: `data=${encodeURIComponent(overpassQuery)}`,
-        });
+        let facilitiesLoaded = false;
+        let lastError = null;
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch data from Overpass API');
+        for (const endpoint of OVERPASS_ENDPOINTS) {
+          try {
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: `data=${encodeURIComponent(overpassQuery)}`,
+            });
+
+            if (!response.ok) {
+              lastError = new Error('Failed to fetch data from Overpass API');
+              continue;
+            }
+
+            const data = await response.json();
+            processFacilities(data.elements || []);
+            facilitiesLoaded = true;
+            lastError = null;
+            break;
+          } catch (innerError) {
+            lastError = innerError;
+          }
         }
 
-        const data = await response.json();
-        processFacilities(data.elements || []);
+        if (!facilitiesLoaded) {
+          throw lastError || new Error('Overpass data is temporarily unavailable. Try again shortly.');
+        }
+
+        setError(null);
       } catch (err) {
-        setError(err.message || 'Unable to load facility data.');
+        setError(err.message || 'Overpass data is temporarily unavailable. Try again shortly.');
       } finally {
         setLoading(false);
       }
@@ -1042,14 +1069,7 @@ const FacilitiesMap = () => {
       return;
     }
 
-    const apiKey = process.env.REACT_APP_TOMTOM_API_KEY;
-
-    if (!apiKey) {
-      setTrafficData(null);
-      setTrafficLoading(false);
-      setTrafficError('Add your REACT_APP_TOMTOM_API_KEY to load TomTom traffic insights.');
-      return;
-    }
+    const apiKey = process.env.REACT_APP_TOMTOM_API_KEY || DEFAULT_TOMTOM_API_KEY;
 
     let cancelled = false;
 
@@ -1107,8 +1127,8 @@ const FacilitiesMap = () => {
 
     const fetchAddress = async () => {
       try {
-        const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${selectedLocation.lat}&lon=${selectedLocation.lon}&zoom=18&addressdetails=1`;
-        const response = await fetch(url, { headers: NOMINATIM_HEADERS });
+        const url = `${GEOCODE_BASE_URL}/reverse?format=json&lat=${selectedLocation.lat}&lon=${selectedLocation.lon}`;
+        const response = await fetch(url, { headers: GEOCODE_HEADERS });
         if (!response.ok) {
           return;
         }
@@ -1159,21 +1179,27 @@ const FacilitiesMap = () => {
     setAddressError(null);
 
     try {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=1&city=Vancouver&country=Canada&bounded=1&viewbox=${NOMINATIM_VIEWBOX}&q=${encodeURIComponent(
-        address.trim()
+      const query = `${address.trim()}, Vancouver, British Columbia, Canada`;
+      const url = `${GEOCODE_BASE_URL}/search?format=json&limit=5&q=${encodeURIComponent(
+        query
       )}`;
-      const response = await fetch(url, { headers: NOMINATIM_HEADERS });
+      const response = await fetch(url, { headers: GEOCODE_HEADERS });
       if (!response.ok) {
-        throw new Error('Unable to reach the geocoding service.');
+        throw new Error('Unable to reach the Vancouver geocoding service.');
       }
       const results = await response.json();
-      if (!results.length) {
+      if (!Array.isArray(results) || !results.length) {
         setAddressError('No Vancouver matches found for that address.');
         return;
       }
-      const top = results[0];
-      const lat = parseFloat(top.lat);
-      const lon = parseFloat(top.lon);
+      const topMatch = results.find((result) => {
+        const latValue = parseFloat(result.lat);
+        const lonValue = parseFloat(result.lon);
+        return isWithinVancouver(latValue, lonValue);
+      }) || results[0];
+
+      const lat = parseFloat(topMatch.lat);
+      const lon = parseFloat(topMatch.lon);
       if (!isWithinVancouver(lat, lon)) {
         setAddressError('Please choose an address located within Vancouver, BC.');
         return;
