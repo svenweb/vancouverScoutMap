@@ -186,7 +186,6 @@
   display: flex;
   align-items: center;
   gap: 16px;
-  flex-wrap: wrap;
 }
 
 .time-entry-fields {
@@ -223,6 +222,7 @@
   background: #f1f5f9;
   border-radius: 14px;
   padding: 4px;
+  margin-left: auto;
 }
 
 .period-button {
@@ -477,7 +477,13 @@
   min-height: 0;
 }
 
-.nearby-card {
+.layer-empty {
+  margin: 0;
+  font-size: 13px;
+  color: #64748b;
+}
+
+.gemini-card {
   background: #ffffff;
   border-radius: 24px;
   border: 1px solid #e2e8f0;
@@ -485,22 +491,23 @@
   padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 20px;
 }
 
-.nearby-card-header {
+.gemini-card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
 
-.nearby-card-header h3 {
+.gemini-card-header h3 {
   margin: 0;
   font-size: 18px;
   color: #0f172a;
 }
 
-.nearby-count {
+.gemini-status {
   font-size: 12px;
   font-weight: 600;
   color: #2563eb;
@@ -509,66 +516,119 @@
   border-radius: 999px;
 }
 
-.nearby-list {
+.gemini-content {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.gemini-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gemini-section h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.gemini-section p {
+  margin: 0;
+  font-size: 14px;
+  color: #1f2937;
+  line-height: 1.6;
+}
+
+.gemini-message {
+  margin: 0;
+  font-size: 13px;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.gemini-message--error {
+  color: #b91c1c;
+}
+
+.gemini-followups {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  max-height: 260px;
-  overflow-y: auto;
-}
-
-.nearby-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.nearby-item-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 12px;
 }
 
-.nearby-name {
-  font-size: 15px;
-  font-weight: 600;
-  color: #0f172a;
+.gemini-followups li {
+  background: #f8fafc;
+  border-radius: 16px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #1f2937;
+  line-height: 1.5;
 }
 
-.nearby-distance {
+.gemini-followup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gemini-followup-form label {
   font-size: 12px;
   font-weight: 600;
-  color: #2563eb;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
-.nearby-meta {
+.followup-row {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
 }
 
-.category-pill {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 8px;
-  border-radius: 999px;
-  letter-spacing: 0.02em;
+.followup-row input {
+  flex: 1;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  padding: 12px 16px;
+  font-size: 14px;
+  color: #0f172a;
+  transition: border 0.2s ease, box-shadow 0.2s ease;
 }
 
-.nearby-address {
-  font-size: 12px;
-  color: #475569;
+.followup-row input:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.15);
 }
 
-.nearby-empty {
-  margin: 0;
-  font-size: 13px;
-  color: #64748b;
+.followup-row button {
+  border: none;
+  border-radius: 14px;
+  padding: 12px 18px;
+  background: #2563eb;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.followup-row button[disabled] {
+  background: #cbd5f5;
+  cursor: not-allowed;
+}
+
+.followup-row button:not([disabled]):hover {
+  background: #1d4ed8;
+  transform: translateY(-1px);
 }
 
 .insight-grid {
@@ -674,6 +734,15 @@
   margin: 0;
   font-size: 18px;
   color: #0f172a;
+}
+
+.weather-timestamp {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .weather-grid {

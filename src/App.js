@@ -46,6 +46,7 @@ const VANCOUVER_BOUNDS = {
 
 const NOMINATIM_HEADERS = {
   Accept: 'application/json',
+  'User-Agent': 'ScoutScape/1.0 (scoutscape.app contact@scoutscape.app)',
 };
 
 const NOMINATIM_VIEWBOX = '-123.26,49.314,-123.022,49.198';
@@ -98,6 +99,155 @@ const formatDistance = (meters) => {
     return `${(meters / 1000).toFixed(1)} km`;
   }
   return `${meters} m`;
+};
+
+const formatTimeSelection = (selection) => {
+  if (!selection) {
+    return 'Not specified';
+  }
+  return `${selection.hour12}:${selection.minutePadded} ${selection.period}`;
+};
+
+const getVancouverDateParts = () => {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Vancouver',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const parts = formatter.formatToParts(new Date());
+  return {
+    year: parts.find((part) => part.type === 'year')?.value || '2024',
+    month: parts.find((part) => part.type === 'month')?.value || '01',
+    day: parts.find((part) => part.type === 'day')?.value || '01',
+  };
+};
+
+const getVancouverOffset = () => {
+  const offsetPart = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Vancouver',
+    timeZoneName: 'shortOffset',
+  })
+    .formatToParts(new Date())
+    .find((part) => part.type === 'timeZoneName')?.value;
+
+  const match = offsetPart?.match(/GMT([+-]\d{1,2})(?::?(\d{2}))?/i);
+  if (match) {
+    const sign = match[1].startsWith('-') ? '-' : '+';
+    const rawHours = match[1].replace(/^[+-]/, '');
+    const hours = rawHours.padStart(2, '0');
+    const minutes = match[2] ? match[2].padStart(2, '0') : '00';
+    return `${sign}${hours}:${minutes}`;
+  }
+
+  return '-07:00';
+};
+
+const createVancouverIsoDateTime = (hour24, minute) => {
+  const { year, month, day } = getVancouverDateParts();
+  const offset = getVancouverOffset();
+  return `${year}-${month}-${day}T${String(hour24).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00${offset}`;
+};
+
+const buildGeminiPrompt = ({
+  locationLabel,
+  coordinates,
+  radius,
+  timeSelection,
+  stats,
+  facilities,
+  traffic,
+  weather,
+}) => {
+  const lines = [];
+  lines.push('You are advising a film location scout in Vancouver, BC.');
+  lines.push(
+    'Summarize potential sound risks around the scouted address and recommend equipment to mitigate interference from those risks.'
+  );
+  lines.push('Respond in valid JSON with keys "summary" and "equipmentAdvice".');
+  lines.push('Keep the summary concise (3-5 sentences) and focus on practical insights.');
+  lines.push('Equipment advice should mention gear the crew should bring.');
+  lines.push('');
+  lines.push(`Scouted address or description: ${locationLabel}`);
+  lines.push(`Coordinates: ${coordinates.lat.toFixed(5)}, ${coordinates.lon.toFixed(5)}`);
+  lines.push(`Radius analysed: ${radius} meters.`);
+  lines.push(`Time of interest: ${formatTimeSelection(timeSelection)}.`);
+
+  const categoryDetails = Object.entries(stats)
+    .filter(([, value]) => value > 0)
+    .map(([key, value]) => `${CATEGORY_LOOKUP[key].label}: ${value}`);
+  if (categoryDetails.length) {
+    lines.push('Facility counts within radius:');
+    categoryDetails.forEach((line) => lines.push(`- ${line}`));
+  } else {
+    lines.push('No mapped facilities detected in the chosen radius.');
+  }
+
+  if (facilities.length) {
+    lines.push('Notable nearby facilities:');
+    facilities.slice(0, 15).forEach((facility) => {
+      lines.push(
+        `- ${facility.name} (${CATEGORY_LOOKUP[facility.categoryKey].label}) at ${formatDistance(
+          facility.distance
+        )}${facility.address ? `, address: ${facility.address}` : ''}`
+      );
+    });
+  }
+
+  if (traffic) {
+    lines.push('TomTom traffic snapshot:');
+    lines.push(
+      `- Status: ${traffic.status}. Current speed ${traffic.currentSpeed} km/h, free flow ${traffic.freeFlowSpeed} km/h, delay ${traffic.delayDescription}, confidence ${traffic.confidence}.`
+    );
+    if (traffic.roadClosure) {
+      lines.push('- TomTom detected a road closure in this segment.');
+    }
+  }
+
+  if (weather) {
+    lines.push('Weather at the selected time:');
+    lines.push(
+      `- ${weather.condition} with temperature ${weather.temperature}°C, wind ${weather.windSpeed} km/h from ${weather.windDirectionCardinal}.`
+    );
+  }
+
+  lines.push('Always frame advice for film sound recording and mitigation.');
+
+  return lines.join('\n');
+};
+
+const extractGeminiSections = (text) => {
+  if (!text) {
+    return { summary: '', equipmentAdvice: '' };
+  }
+
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+        equipmentAdvice:
+          typeof parsed.equipmentAdvice === 'string' ? parsed.equipmentAdvice.trim() : '',
+      };
+    } catch (err) {
+      // fall through to text parsing
+    }
+  }
+
+  const lower = text.toLowerCase();
+  const equipmentIndex = lower.indexOf('equipment');
+  if (equipmentIndex >= 0) {
+    return {
+      summary: text.slice(0, equipmentIndex).trim(),
+      equipmentAdvice: text.slice(equipmentIndex).trim(),
+    };
+  }
+
+  return {
+    summary: text.trim(),
+    equipmentAdvice: '',
+  };
 };
 
 const createBadgeIcon = (color, text) =>
@@ -310,6 +460,7 @@ const FacilitiesMap = () => {
   const searchCircleRef = useRef(null);
   const previousLocationRef = useRef(null);
   const selectedLocationRef = useRef(null);
+  const aggregatedFacilitiesRef = useRef([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -330,7 +481,6 @@ const FacilitiesMap = () => {
   });
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState(null);
-  const [nearbyFacilities, setNearbyFacilities] = useState([]);
   const [addressError, setAddressError] = useState(null);
   const [locationError, setLocationError] = useState(null);
   const [geocoding, setGeocoding] = useState(false);
@@ -338,6 +488,13 @@ const FacilitiesMap = () => {
   const [trafficData, setTrafficData] = useState(null);
   const [trafficLoading, setTrafficLoading] = useState(false);
   const [trafficError, setTrafficError] = useState(null);
+  const [geminiSummary, setGeminiSummary] = useState(null);
+  const [geminiAdvice, setGeminiAdvice] = useState(null);
+  const [geminiLoading, setGeminiLoading] = useState(false);
+  const [geminiError, setGeminiError] = useState(null);
+  const [geminiFollowUp, setGeminiFollowUp] = useState('');
+  const [geminiFollowUps, setGeminiFollowUps] = useState([]);
+  const geminiThreadRef = useRef([]);
 
   const icons = useMemo(() => {
     const iconMap = {};
@@ -371,8 +528,6 @@ const FacilitiesMap = () => {
     };
   }, [stats]);
 
-  const topFacilities = useMemo(() => nearbyFacilities.slice(0, 20), [nearbyFacilities]);
-
   const parsedTimeSelection = useMemo(
     () => parseTimeInput(timeHour, timeMinute, timePeriod),
     [timeHour, timeMinute, timePeriod]
@@ -381,6 +536,29 @@ const FacilitiesMap = () => {
   const hasTimeInput = timeHour !== '' || timeMinute !== '';
 
   const trafficStatus = useMemo(() => describeTrafficLevel(trafficData), [trafficData]);
+
+  const layerControls = useMemo(() => {
+    if (!selectedLocation) {
+      return CATEGORY_CONFIG;
+    }
+    return CATEGORY_CONFIG.filter(({ key }) => (stats[key] || 0) > 0);
+  }, [selectedLocation, stats]);
+
+  const weatherDisplayTime = useMemo(() => {
+    if (!weather || !weather.time) {
+      return null;
+    }
+    try {
+      const date = new Date(`${weather.time}:00`);
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Vancouver',
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(date);
+    } catch (err) {
+      return null;
+    }
+  }, [weather]);
 
   const isWithinVancouver = useCallback((lat, lon) => {
     if (typeof lat !== 'number' || typeof lon !== 'number' || Number.isNaN(lat) || Number.isNaN(lon)) {
@@ -619,7 +797,7 @@ const FacilitiesMap = () => {
         }
       });
       setStats(createZeroStats());
-      setNearbyFacilities([]);
+      aggregatedFacilitiesRef.current = [];
       return;
     }
 
@@ -689,7 +867,7 @@ const FacilitiesMap = () => {
     aggregated.sort((a, b) => a.distance - b.distance);
 
     setStats(newStats);
-    setNearbyFacilities(aggregated);
+    aggregatedFacilitiesRef.current = aggregated;
   }, [facilityData, icons, radius, selectedLocation, visibleLayers]);
 
   useEffect(() => {
@@ -767,20 +945,66 @@ const FacilitiesMap = () => {
 
     const fetchWeather = async () => {
       try {
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${selectedLocation.lat}&longitude=${selectedLocation.lon}&current_weather=true&timezone=America/Vancouver`;
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${selectedLocation.lat}&longitude=${selectedLocation.lon}&hourly=temperature_2m,wind_speed_10m,wind_direction_10m,weathercode&current_weather=true&timezone=America/Vancouver`;
         const response = await fetch(url);
         if (!response.ok) {
           throw new Error('Weather data unavailable');
         }
         const data = await response.json();
-        if (!cancelled && data?.current_weather) {
-          setWeather({
+        if (cancelled) {
+          return;
+        }
+
+        const hourlyTimes = data?.hourly?.time || [];
+        const hourlyTemps = data?.hourly?.temperature_2m || [];
+        const hourlyWindSpeeds = data?.hourly?.wind_speed_10m || [];
+        const hourlyWindDirections = data?.hourly?.wind_direction_10m || [];
+        const hourlyWeatherCodes = data?.hourly?.weathercode || [];
+
+        const timeTarget = parsedTimeSelection;
+        let selectedWeather = null;
+
+        if (timeTarget && hourlyTimes.length) {
+          const offset = getVancouverOffset();
+          const targetIso = createVancouverIsoDateTime(timeTarget.hour24, timeTarget.minute);
+          let bestIndex = 0;
+          let bestDiff = Infinity;
+
+          hourlyTimes.forEach((time, index) => {
+            const comparisonTime = new Date(`${time}:00${offset}`);
+            const targetTime = new Date(targetIso);
+            const diff = Math.abs(comparisonTime.getTime() - targetTime.getTime());
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              bestIndex = index;
+            }
+          });
+
+          selectedWeather = {
+            temperature: hourlyTemps[bestIndex],
+            windSpeed: hourlyWindSpeeds[bestIndex],
+            windDirection: hourlyWindDirections[bestIndex],
+            condition: describeWeather(hourlyWeatherCodes[bestIndex]),
+            time: hourlyTimes[bestIndex],
+            source: 'hourly',
+          };
+        }
+
+        if (!selectedWeather && data?.current_weather) {
+          selectedWeather = {
             temperature: data.current_weather.temperature,
             windSpeed: data.current_weather.windspeed,
             windDirection: data.current_weather.winddirection,
             condition: describeWeather(data.current_weather.weathercode),
             time: data.current_weather.time,
-          });
+            source: 'current',
+          };
+        }
+
+        if (selectedWeather) {
+          setWeather(selectedWeather);
+        } else {
+          setWeather(null);
         }
       } catch (err) {
         if (!cancelled) {
@@ -794,7 +1018,7 @@ const FacilitiesMap = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedLocation]);
+  }, [parsedTimeSelection, selectedLocation]);
 
   useEffect(() => {
     if (!selectedLocation) {
@@ -834,9 +1058,10 @@ const FacilitiesMap = () => {
       setTrafficError(null);
 
       try {
-        const targetDate = new Date();
-        targetDate.setHours(parsedTimeSelection.hour24, parsedTimeSelection.minute, 0, 0);
-        const isoDateTime = targetDate.toISOString();
+        const isoDateTime = createVancouverIsoDateTime(
+          parsedTimeSelection.hour24,
+          parsedTimeSelection.minute
+        );
         const url = `https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point=${selectedLocation.lat},${selectedLocation.lon}&unit=KMPH&key=${apiKey}&dateTime=${encodeURIComponent(
           isoDateTime
         )}`;
@@ -905,7 +1130,23 @@ const FacilitiesMap = () => {
 
   useEffect(() => {
     setAnalysisResult(null);
+    setGeminiSummary(null);
+    setGeminiAdvice(null);
+    setGeminiError(null);
+    setGeminiFollowUps([]);
+    setGeminiFollowUp('');
+    geminiThreadRef.current = [];
   }, [selectedLocation, radius]);
+
+  useEffect(() => {
+    setAnalysisResult(null);
+    setGeminiSummary(null);
+    setGeminiAdvice(null);
+    setGeminiError(null);
+    setGeminiFollowUps([]);
+    setGeminiFollowUp('');
+    geminiThreadRef.current = [];
+  }, [parsedTimeSelection]);
 
   const handleSearchAddress = async (event) => {
     event.preventDefault();
@@ -953,7 +1194,42 @@ const FacilitiesMap = () => {
     }));
   };
 
-  const handleAnalyze = () => {
+  const sendGeminiRequest = useCallback(async (messages) => {
+    const apiKey = process.env.REACT_APP_GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('Add your REACT_APP_GEMINI_API_KEY to enable Google Gemini insights.');
+    }
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: messages }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      const message = errorData?.error?.message || 'Google Gemini request failed.';
+      throw new Error(message);
+    }
+
+    const data = await response.json();
+    const text =
+      data?.candidates?.[0]?.content?.parts
+        ?.map((part) => (typeof part.text === 'string' ? part.text : ''))
+        .join(' ')
+        .trim() || '';
+
+    if (!text) {
+      throw new Error('Google Gemini returned an empty response.');
+    }
+
+    return text;
+  }, []);
+
+  const handleAnalyze = useCallback(async () => {
     if (!selectedLocation) {
       setLocationError('Choose a Vancouver location before running the analysis.');
       return;
@@ -961,47 +1237,164 @@ const FacilitiesMap = () => {
 
     setAnalyzing(true);
     setAnalysisResult(null);
+    setGeminiSummary(null);
+    setGeminiAdvice(null);
+    setGeminiError(null);
+    setGeminiFollowUps([]);
+    setGeminiFollowUp('');
+    geminiThreadRef.current = [];
 
-    window.setTimeout(() => {
-      setAnalyzing(false);
-      const total = Object.values(stats).reduce((acc, value) => acc + value, 0);
-      let busiestKey = null;
-      let busiestCount = 0;
-      Object.entries(stats).forEach(([key, value]) => {
-        if (value > busiestCount) {
-          busiestKey = key;
-          busiestCount = value;
-        }
-      });
-      const busiest =
-        busiestKey && busiestCount > 0
-          ? {
-              key: busiestKey,
-              label: CATEGORY_LOOKUP[busiestKey].label,
-              count: busiestCount,
-            }
-          : null;
-
-      const timeSnapshot = parsedTimeSelection
-        ? { ...parsedTimeSelection }
+    const total = Object.values(stats).reduce((acc, value) => acc + value, 0);
+    let busiestKey = null;
+    let busiestCount = 0;
+    Object.entries(stats).forEach(([key, value]) => {
+      if (value > busiestCount) {
+        busiestKey = key;
+        busiestCount = value;
+      }
+    });
+    const busiest =
+      busiestKey && busiestCount > 0
+        ? {
+            key: busiestKey,
+            label: CATEGORY_LOOKUP[busiestKey].label,
+            count: busiestCount,
+          }
         : null;
 
-      setAnalysisResult({
-        total,
+    const timeSnapshot = parsedTimeSelection ? { ...parsedTimeSelection } : null;
+
+    setAnalysisResult({
+      total,
+      radius,
+      timeSelection: timeSnapshot,
+      busiest,
+    });
+
+    const facilities = aggregatedFacilitiesRef.current.slice();
+
+    const trafficSnapshot = trafficData
+      ? {
+          status: describeTrafficLevel(trafficData),
+          currentSpeed:
+            typeof trafficData.currentSpeed === 'number'
+              ? Math.round(trafficData.currentSpeed)
+              : 'unknown',
+          freeFlowSpeed:
+            typeof trafficData.freeFlowSpeed === 'number'
+              ? Math.round(trafficData.freeFlowSpeed)
+              : 'unknown',
+          delayDescription: formatTrafficDelay(trafficData),
+          confidence:
+            typeof trafficData.confidence === 'number'
+              ? `${Math.round(
+                  Math.min(Math.max(trafficData.confidence, 0), 1) * 100
+                )}%`
+              : 'unknown',
+          roadClosure: Boolean(trafficData.roadClosure),
+        }
+      : null;
+
+    const weatherSnapshot = weather
+      ? {
+          temperature:
+            typeof weather.temperature === 'number' ? Math.round(weather.temperature) : 'unknown',
+          windSpeed: typeof weather.windSpeed === 'number' ? Math.round(weather.windSpeed) : 'unknown',
+          windDirectionCardinal:
+            typeof weather.windDirection === 'number'
+              ? toCardinal(weather.windDirection)
+              : 'variable',
+          condition: weather.condition || 'Conditions unavailable',
+        }
+      : null;
+
+    const locationLabel = address?.trim() || 'Selected coordinates inside Vancouver, BC';
+
+    try {
+      setGeminiLoading(true);
+      const prompt = buildGeminiPrompt({
+        locationLabel,
+        coordinates: selectedLocation,
         radius,
         timeSelection: timeSnapshot,
-        busiest,
+        stats,
+        facilities,
+        traffic: trafficSnapshot,
+        weather: weatherSnapshot,
       });
-    }, 900);
-  };
+
+      const userMessage = { role: 'user', parts: [{ text: prompt }] };
+      const responseText = await sendGeminiRequest([userMessage]);
+      const { summary, equipmentAdvice } = extractGeminiSections(responseText);
+      setGeminiSummary(
+        summary || 'Gemini did not return a written summary for this analysis yet.'
+      );
+      setGeminiAdvice(
+        equipmentAdvice ||
+          'Gemini did not return specific equipment recommendations. Consider bringing standard wind protection and directional microphones.'
+      );
+      geminiThreadRef.current = [userMessage, { role: 'model', parts: [{ text: responseText }] }];
+    } catch (err) {
+      setGeminiError(err.message || 'Unable to retrieve Google Gemini summary.');
+      geminiThreadRef.current = [];
+    } finally {
+      setGeminiLoading(false);
+      setAnalyzing(false);
+    }
+  }, [
+    address,
+    parsedTimeSelection,
+    radius,
+    selectedLocation,
+    sendGeminiRequest,
+    stats,
+    trafficData,
+    weather,
+  ]);
 
   const timeSelectionSummary = (result) => {
     if (!result || !result.timeSelection) {
       return 'Not specified';
     }
-    const { hour12, minutePadded, period } = result.timeSelection;
-    return `${hour12}:${minutePadded} ${period}`;
+    return formatTimeSelection(result.timeSelection);
   };
+
+  const handleGeminiFollowUpSubmit = useCallback(
+    async (event) => {
+      event.preventDefault();
+      if (!geminiSummary || !geminiFollowUp.trim() || geminiLoading) {
+        return;
+      }
+
+      const question = geminiFollowUp.trim();
+
+      try {
+        setGeminiLoading(true);
+        const userMessage = {
+          role: 'user',
+          parts: [
+            {
+              text: `Follow-up question from the scout based on the previous summary and advice: ${question}`,
+            },
+          ],
+        };
+        const responseText = await sendGeminiRequest([...geminiThreadRef.current, userMessage]);
+        const trimmedResponse = responseText.trim();
+        geminiThreadRef.current = [
+          ...geminiThreadRef.current,
+          userMessage,
+          { role: 'model', parts: [{ text: trimmedResponse }] },
+        ];
+        setGeminiFollowUps((prev) => [...prev, { question, answer: trimmedResponse }]);
+        setGeminiFollowUp('');
+      } catch (err) {
+        setGeminiError(err.message || 'Unable to retrieve follow-up guidance from Google Gemini.');
+      } finally {
+        setGeminiLoading(false);
+      }
+    },
+    [geminiFollowUp, geminiLoading, geminiSummary, sendGeminiRequest]
+  );
 
   return (
     <div className="app-container">
@@ -1117,7 +1510,11 @@ const FacilitiesMap = () => {
               Choose a local time to review TomTom traffic around your scouting pin.
             </p>
 
-            <button onClick={handleAnalyze} disabled={analyzing} className="analyze-button">
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing || geminiLoading}
+              className="analyze-button"
+            >
               {analyzing ? (
                 <>
                   <div className="spinner"></div>
@@ -1158,63 +1555,93 @@ const FacilitiesMap = () => {
             <div className="map-layer-controls">
               <h3>Layer controls</h3>
               <p>Toggle categories to focus your scouting results.</p>
-              {CATEGORY_CONFIG.map(({ key, label, color }) => (
-                <div
-                  key={key}
-                  onClick={() => toggleLayer(key)}
-                  className={`layer-item ${visibleLayers[key] ? 'active' : ''}`}
-                  style={{ borderColor: visibleLayers[key] ? color : '#e2e8f0' }}
-                >
-                  <div className="layer-label">
-                    <div
-                      className="layer-color"
-                      style={{ background: color, opacity: visibleLayers[key] ? 1 : 0.3 }}
-                    ></div>
-                    <span>{label}</span>
-                  </div>
-                  <span
-                    className="layer-count"
-                    style={{ color, background: `${color}20` }}
+              {selectedLocation && layerControls.length === 0 ? (
+                <p className="layer-empty">No mapped categories currently fall within this radius.</p>
+              ) : (
+                layerControls.map(({ key, label, color }) => (
+                  <div
+                    key={key}
+                    onClick={() => toggleLayer(key)}
+                    className={`layer-item ${visibleLayers[key] ? 'active' : ''}`}
+                    style={{ borderColor: visibleLayers[key] ? color : '#e2e8f0' }}
                   >
-                    {stats[key] || 0}
-                  </span>
-                </div>
-              ))}
+                    <div className="layer-label">
+                      <div
+                        className="layer-color"
+                        style={{ background: color, opacity: visibleLayers[key] ? 1 : 0.3 }}
+                      ></div>
+                      <span>{label}</span>
+                    </div>
+                    <span
+                      className="layer-count"
+                      style={{ color, background: `${color}20` }}
+                    >
+                      {stats[key] || 0}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
           </div>
-
-          <div className="nearby-card">
-            <div className="nearby-card-header">
-              <h3>Nearby activity</h3>
-              <span className="nearby-count">{nearbyFacilities.length} results</span>
+          <div className="gemini-card">
+            <div className="gemini-card-header">
+              <h3>Gemini scouting brief</h3>
+              {geminiLoading && <span className="gemini-status">Generating…</span>}
             </div>
-            {selectedLocation ? (
-              topFacilities.length ? (
-                <ul className="nearby-list">
-                  {topFacilities.map((facility) => (
-                    <li key={`${facility.categoryKey}-${facility.id}`} className="nearby-item">
-                      <div className="nearby-item-header">
-                        <span className="nearby-name">{facility.name}</span>
-                        <span className="nearby-distance">{formatDistance(facility.distance)}</span>
-                      </div>
-                      <div className="nearby-meta">
-                        <span
-                          className="category-pill"
-                          style={{ color: facility.color, background: `${facility.color}20` }}
-                        >
-                          {facility.categoryLabel}
-                        </span>
-                        {facility.address && <span className="nearby-address">{facility.address}</span>}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+            {analysisResult ? (
+              geminiError ? (
+                <p className="gemini-message gemini-message--error">{geminiError}</p>
+              ) : geminiSummary || geminiLoading ? (
+                <div className="gemini-content">
+                  {geminiSummary && (
+                    <div className="gemini-section">
+                      <h4>Summary</h4>
+                      <p>{geminiSummary}</p>
+                    </div>
+                  )}
+                  {geminiAdvice && (
+                    <div className="gemini-section">
+                      <h4>Equipment advice</h4>
+                      <p>{geminiAdvice}</p>
+                    </div>
+                  )}
+                  {geminiFollowUps.length > 0 && (
+                    <div className="gemini-section">
+                      <h4>Follow-up guidance</h4>
+                      <ul className="gemini-followups">
+                        {geminiFollowUps.map((entry, index) => (
+                          <li key={`${index}-${entry.question.slice(0, 12)}`}>
+                            <strong>Scout:</strong> {entry.question}
+                            <br />
+                            <strong>Gemini:</strong> {entry.answer}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  <form className="gemini-followup-form" onSubmit={handleGeminiFollowUpSubmit}>
+                    <label htmlFor="gemini-followup">Ask Gemini for more tailored advice</label>
+                    <div className="followup-row">
+                      <input
+                        id="gemini-followup"
+                        type="text"
+                        value={geminiFollowUp}
+                        onChange={(event) => setGeminiFollowUp(event.target.value)}
+                        placeholder="Ask about mitigating a specific concern…"
+                        disabled={geminiLoading || !geminiSummary}
+                      />
+                      <button type="submit" disabled={geminiLoading || !geminiSummary}>
+                        Send
+                      </button>
+                    </div>
+                  </form>
+                </div>
               ) : (
-                <p className="nearby-empty">No facilities detected inside this radius.</p>
+                <p className="gemini-message">Google Gemini is preparing your scouting brief…</p>
               )
             ) : (
-              <p className="nearby-empty">
-                Choose a Vancouver location to surface nearby services and potential noise sources.
+              <p className="gemini-message">
+                Run the sound analysis to generate a Gemini summary and tailored equipment recommendations.
               </p>
             )}
           </div>
@@ -1282,27 +1709,46 @@ const FacilitiesMap = () => {
             </div>
 
             <div className="weather-card">
-              <h3>Current conditions</h3>
+              <h3>Conditions at selected time</h3>
               {weather ? (
-                <div className="weather-grid">
-                  <div className="weather-metric">
-                    <span className="weather-label">Temperature</span>
-                    <span className="weather-value">{Math.round(weather.temperature)}°C</span>
+                <>
+                  {weatherDisplayTime && (
+                    <p className="weather-timestamp">
+                      {weather.source === 'hourly'
+                        ? `Forecast for ${weatherDisplayTime}`
+                        : `Current as of ${weatherDisplayTime}`}
+                    </p>
+                  )}
+                  <div className="weather-grid">
+                    <div className="weather-metric">
+                      <span className="weather-label">Temperature</span>
+                      <span className="weather-value">
+                        {typeof weather.temperature === 'number'
+                          ? `${Math.round(weather.temperature)}°C`
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="weather-metric">
+                      <span className="weather-label">Wind</span>
+                      <span className="weather-value">
+                        {typeof weather.windSpeed === 'number'
+                          ? `${Math.round(weather.windSpeed)} km/h ${
+                              typeof weather.windDirection === 'number'
+                                ? toCardinal(weather.windDirection)
+                                : 'variable'
+                            }`
+                          : '—'}
+                      </span>
+                    </div>
+                    <div className="weather-metric">
+                      <span className="weather-label">Conditions</span>
+                      <span className="weather-value">{weather.condition}</span>
+                    </div>
                   </div>
-                  <div className="weather-metric">
-                    <span className="weather-label">Wind</span>
-                    <span className="weather-value">
-                      {Math.round(weather.windSpeed)} km/h {toCardinal(weather.windDirection)}
-                    </span>
-                  </div>
-                  <div className="weather-metric">
-                    <span className="weather-label">Conditions</span>
-                    <span className="weather-value">{weather.condition}</span>
-                  </div>
-                </div>
+                </>
               ) : (
                 <p className="weather-placeholder">
-                  Select a Vancouver location to check current filming conditions.
+                  Select a Vancouver location and time to preview filming conditions.
                 </p>
               )}
             </div>
