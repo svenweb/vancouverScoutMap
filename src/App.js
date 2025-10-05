@@ -52,12 +52,22 @@ const GEOCODE_HEADERS = {
 const GEOCODE_BASE_URL = 'https://geocode.maps.co';
 
 const DEFAULT_TOMTOM_API_KEY = 'Ayf2O9cIj6CuFYv7ZjEJUUaU2S5txdTQ';
+const DEFAULT_GEMINI_API_KEY = 'AIzaSyCHEbnuTeXfarDkKTbS5E50YGwMothFQ5g';
 
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.openstreetmap.ru/api/interpreter',
+  'https://overpass.osm.ch/api/interpreter',
 ];
+
+const OVERPASS_HEADERS = {
+  'Content-Type': 'application/x-www-form-urlencoded',
+  Accept: 'application/json',
+  'User-Agent': GEOCODE_HEADERS['User-Agent'],
+};
+
+const OVERPASS_RETRY_DELAYS = [0, 750, 2000, 4000];
 
 const WEATHER_CODE_SUMMARY = {
   0: 'Clear sky',
@@ -770,28 +780,46 @@ const FacilitiesMap = () => {
         let facilitiesLoaded = false;
         let lastError = null;
 
-        for (const endpoint of OVERPASS_ENDPOINTS) {
-          try {
-            const response = await fetch(endpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: `data=${encodeURIComponent(overpassQuery)}`,
-            });
-
-            if (!response.ok) {
-              lastError = new Error('Failed to fetch data from Overpass API');
-              continue;
+        overpassLoop: for (const endpoint of OVERPASS_ENDPOINTS) {
+          for (let attempt = 0; attempt < OVERPASS_RETRY_DELAYS.length; attempt += 1) {
+            const delay = OVERPASS_RETRY_DELAYS[attempt];
+            if (delay > 0) {
+              await new Promise((resolve) => setTimeout(resolve, delay));
             }
 
-            const data = await response.json();
-            processFacilities(data.elements || []);
-            facilitiesLoaded = true;
-            lastError = null;
-            break;
-          } catch (innerError) {
-            lastError = innerError;
+            try {
+              const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: OVERPASS_HEADERS,
+                body: `data=${encodeURIComponent(overpassQuery)}`,
+              });
+
+              if (!response.ok) {
+                const error = new Error('Failed to fetch data from Overpass API');
+                error.status = response.status;
+                lastError = error;
+
+                if (response.status === 429 && attempt < OVERPASS_RETRY_DELAYS.length - 1) {
+                  continue;
+                }
+
+                break;
+              }
+
+              const data = await response.json();
+              processFacilities(data.elements || []);
+              facilitiesLoaded = true;
+              lastError = null;
+              break overpassLoop;
+            } catch (innerError) {
+              lastError = innerError;
+
+              if (attempt < OVERPASS_RETRY_DELAYS.length - 1) {
+                continue;
+              }
+
+              break;
+            }
           }
         }
 
@@ -981,6 +1009,16 @@ const FacilitiesMap = () => {
         if (cancelled) {
           return;
         }
+        const data = await response.json();
+        if (cancelled) {
+          return;
+        }
+
+        const hourlyTimes = data?.hourly?.time || [];
+        const hourlyTemps = data?.hourly?.temperature_2m || [];
+        const hourlyWindSpeeds = data?.hourly?.wind_speed_10m || [];
+        const hourlyWindDirections = data?.hourly?.wind_direction_10m || [];
+        const hourlyWeatherCodes = data?.hourly?.weathercode || [];
 
         const hourlyTimes = data?.hourly?.time || [];
         const hourlyTemps = data?.hourly?.temperature_2m || [];
@@ -1221,9 +1259,9 @@ const FacilitiesMap = () => {
   };
 
   const sendGeminiRequest = useCallback(async (messages) => {
-    const apiKey = process.env.REACT_APP_GEMINI_API_KEY;
+    const apiKey = process.env.REACT_APP_GEMINI_API_KEY || DEFAULT_GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error('Add your REACT_APP_GEMINI_API_KEY to enable Google Gemini insights.');
+      throw new Error('Google Gemini insights are not available right now.');
     }
 
     const response = await fetch(
