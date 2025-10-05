@@ -1009,6 +1009,16 @@ const FacilitiesMap = () => {
         if (cancelled) {
           return;
         }
+        const data = await response.json();
+        if (cancelled) {
+          return;
+        }
+
+        const hourlyTimes = data?.hourly?.time || [];
+        const hourlyTemps = data?.hourly?.temperature_2m || [];
+        const hourlyWindSpeeds = data?.hourly?.wind_speed_10m || [];
+        const hourlyWindDirections = data?.hourly?.wind_direction_10m || [];
+        const hourlyWeatherCodes = data?.hourly?.weathercode || [];
 
         const hourlyTimes = data?.hourly?.time || [];
         const hourlyTemps = data?.hourly?.temperature_2m || [];
