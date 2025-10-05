@@ -32,7 +32,8 @@ const FacilitiesMap = () => {
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
   const [radius, setRadius] = useState(200);
-  const [timeWindow, setTimeWindow] = useState('day');
+  const [timeWindowDays, setTimeWindowDays] = useState('');
+  const [timeWindowHours, setTimeWindowHours] = useState('');
 
   // Custom icons for different facility types
   const icons = useMemo(() => ({
@@ -417,19 +418,28 @@ const FacilitiesMap = () => {
             </div>
 
             <label className="field-label">Time window</label>
-            <div className="time-window">
-              {['day', 'night', 'custom'].map((option) => (
-                <button
-                  key={option}
-                  type="button"
-                  className={`time-window-option ${timeWindow === option ? 'active' : ''}`}
-                  onClick={() => setTimeWindow(option)}
-                >
-                  {option === 'day' && 'Day'}
-                  {option === 'night' && 'Night'}
-                  {option === 'custom' && 'Custom'}
-                </button>
-              ))}
+            <div className="time-window-inputs">
+              <div className="time-input-field">
+                <span>Days</span>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="0"
+                  value={timeWindowDays}
+                  onChange={(e) => setTimeWindowDays(e.target.value)}
+                />
+              </div>
+              <div className="time-input-field">
+                <span>Hours</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="23"
+                  placeholder="0"
+                  value={timeWindowHours}
+                  onChange={(e) => setTimeWindowHours(e.target.value)}
+                />
+              </div>
             </div>
 
             <button
