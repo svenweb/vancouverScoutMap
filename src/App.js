@@ -5,6 +5,7 @@ import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
 import markerIcon from 'leaflet/dist/images/marker-icon.png';
 import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 import './App.css';
+import { analyze } from './analyze';
 
 // Fix for default marker icons in Leaflet with bundlers
 delete L.Icon.Default.prototype._getIconUrl;
@@ -876,6 +877,35 @@ const FacilitiesMap = () => {
 
     setFacilityData(grouped);
   }, []);
+
+  const handleMapClick = useCallback((e) => {
+    if (isDroppingPin) {
+      const { lat, lng } = e.latlng;
+      setLatitude(lat.toFixed(6));
+      setLongitude(lng.toFixed(6));
+      setIsDroppingPin(false);
+      
+      // Reset cursor
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.getContainer().style.cursor = '';
+      }
+
+      // Add or update pin marker
+      if (selectedPin) {
+        mapInstanceRef.current.removeLayer(selectedPin);
+      }
+      
+      const pinIcon = L.divIcon({
+        html: '<div style="background: #ef4444; width: 20px; height: 20px; border-radius: 50% 50% 50% 0; border: 2px solid white; transform: rotate(-45deg); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>',
+        className: '',
+        iconSize: [20, 20],
+        iconAnchor: [10, 20],
+      });
+
+      const newPin = L.marker([lat, lng], { icon: pinIcon }).addTo(mapInstanceRef.current);
+      setSelectedPin(newPin);
+    }
+  }, [isDroppingPin, selectedPin]);
 
   useEffect(() => {
     let cancelled = false;
