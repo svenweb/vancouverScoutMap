@@ -1181,74 +1181,82 @@ const FacilitiesMap = () => {
     let cancelled = false;
 
     const fetchWeather = async () => {
-      try {
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${selectedLocation.lat}&longitude=${selectedLocation.lon}&hourly=temperature_2m,wind_speed_10m,wind_direction_10m,weathercode&current_weather=true&timezone=America/Vancouver`;
-        const response = await fetch(url);
-        if (!response.ok) {
-          throw new Error('Weather data unavailable');
-        }
-        const weatherData = await response.json();
-        if (cancelled) {
-          return;
-        }
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${selectedLocation.lat}&longitude=${selectedLocation.lon}&hourly=temperature_2m,wind_speed_10m,wind_direction_10m,weathercode&current_weather=true&timezone=America/Vancouver`;
 
-        const hourlyTimes = weatherData?.hourly?.time || [];
-        const hourlyTemps = weatherData?.hourly?.temperature_2m || [];
-        const hourlyWindSpeeds = weatherData?.hourly?.wind_speed_10m || [];
-        const hourlyWindDirections = weatherData?.hourly?.wind_direction_10m || [];
-        const hourlyWeatherCodes = weatherData?.hourly?.weathercode || [];
+      const response = await fetch(url).catch(() => null);
+      if (cancelled) {
+        return;
+      }
 
-        const timeTarget = parsedTimeSelection;
-        let selectedWeather = null;
-
-        if (timeTarget && hourlyTimes.length) {
-          const offset = getVancouverOffset();
-          const targetIso = createVancouverIsoDateTime(timeTarget.hour24, timeTarget.minute);
-          let bestIndex = 0;
-          let bestDiff = Infinity;
-
-          hourlyTimes.forEach((time, index) => {
-            const comparisonTime = new Date(`${time}:00${offset}`);
-            const targetTime = new Date(targetIso);
-            const diff = Math.abs(comparisonTime.getTime() - targetTime.getTime());
-            if (diff < bestDiff) {
-              bestDiff = diff;
-              bestIndex = index;
-            }
-          });
-
-          selectedWeather = {
-            temperature: hourlyTemps[bestIndex],
-            windSpeed: hourlyWindSpeeds[bestIndex],
-            windDirection: hourlyWindDirections[bestIndex],
-            condition: describeWeather(hourlyWeatherCodes[bestIndex]),
-            time: hourlyTimes[bestIndex],
-            source: 'hourly',
-          };
+      if (!response || !response.ok) {
+        if (!cancelled) {
+          setWeather(null);
         }
         return;
       }
 
-        if (!selectedWeather && weatherData?.current_weather) {
-          selectedWeather = {
-            temperature: weatherData.current_weather.temperature,
-            windSpeed: weatherData.current_weather.windspeed,
-            windDirection: weatherData.current_weather.winddirection,
-            condition: describeWeather(weatherData.current_weather.weathercode),
-            time: weatherData.current_weather.time,
-            source: 'current',
-          };
-        }
+      const weatherData = await response.json().catch(() => null);
+      if (cancelled) {
+        return;
+      }
 
-        if (selectedWeather) {
-          setWeather(selectedWeather);
-        } else {
-          setWeather(null);
-        }
-      } catch (err) {
+      if (!weatherData) {
         if (!cancelled) {
           setWeather(null);
         }
+        return;
+      }
+
+      const hourlyTimes = weatherData?.hourly?.time || [];
+      const hourlyTemps = weatherData?.hourly?.temperature_2m || [];
+      const hourlyWindSpeeds = weatherData?.hourly?.wind_speed_10m || [];
+      const hourlyWindDirections = weatherData?.hourly?.wind_direction_10m || [];
+      const hourlyWeatherCodes = weatherData?.hourly?.weathercode || [];
+
+      const timeTarget = parsedTimeSelection;
+      let selectedWeather = null;
+
+      if (timeTarget && hourlyTimes.length) {
+        const offset = getVancouverOffset();
+        const targetIso = createVancouverIsoDateTime(timeTarget.hour24, timeTarget.minute);
+        let bestIndex = 0;
+        let bestDiff = Infinity;
+
+        hourlyTimes.forEach((time, index) => {
+          const comparisonTime = new Date(`${time}:00${offset}`);
+          const targetTime = new Date(targetIso);
+          const diff = Math.abs(comparisonTime.getTime() - targetTime.getTime());
+          if (diff < bestDiff) {
+            bestDiff = diff;
+            bestIndex = index;
+          }
+        });
+
+        selectedWeather = {
+          temperature: hourlyTemps[bestIndex],
+          windSpeed: hourlyWindSpeeds[bestIndex],
+          windDirection: hourlyWindDirections[bestIndex],
+          condition: describeWeather(hourlyWeatherCodes[bestIndex]),
+          time: hourlyTimes[bestIndex],
+          source: 'hourly',
+        };
+      }
+
+      if (!selectedWeather && weatherData?.current_weather) {
+        selectedWeather = {
+          temperature: weatherData.current_weather.temperature,
+          windSpeed: weatherData.current_weather.windspeed,
+          windDirection: weatherData.current_weather.winddirection,
+          condition: describeWeather(weatherData.current_weather.weathercode),
+          time: weatherData.current_weather.time,
+          source: 'current',
+        };
+      }
+
+      if (selectedWeather) {
+        setWeather(selectedWeather);
+      } else {
+        setWeather(null);
       }
     };
 
