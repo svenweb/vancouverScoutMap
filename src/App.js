@@ -88,7 +88,7 @@ const decodeBase64 = (value) => {
 
 const DEFAULT_TOMTOM_KEY = decodeBase64('QXlmMk85Y0lqNkN1Rll2N1pqRUpVVWFVMlM1dHhkVFE=');
 const DEFAULT_GEMINI_KEY = decodeBase64('QUl6YVN5Qko0MFkzWWFlM0tteDl2VGV4blRiV3lzeENWdXFKT0dn');
-const GEMINI_MODEL = 'gemini-pro';
+const GEMINI_MODEL = 'gemini-2.5-flash-lite';
 
 const ENV_TOMTOM_API_KEY = process.env.REACT_APP_TOMTOM_API_KEY;
 const ENV_GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
