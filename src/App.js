@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './App.css';
+import { analyze } from './analyze';
 
 // Fix for default marker icons in Leaflet with bundlers
 delete L.Icon.Default.prototype._getIconUrl;
@@ -34,6 +35,8 @@ const FacilitiesMap = () => {
   const [radius, setRadius] = useState(200);
   const [timeWindowDays, setTimeWindowDays] = useState('');
   const [timeWindowHours, setTimeWindowHours] = useState('');
+  const [isDroppingPin, setIsDroppingPin] = useState(false);
+  const [selectedPin, setSelectedPin] = useState(null);
 
   // Custom icons for different facility types
   const icons = useMemo(() => ({
@@ -198,6 +201,35 @@ const FacilitiesMap = () => {
     setStats(newStats);
   }, [addMarker]);
 
+  const handleMapClick = useCallback((e) => {
+    if (isDroppingPin) {
+      const { lat, lng } = e.latlng;
+      setLatitude(lat.toFixed(6));
+      setLongitude(lng.toFixed(6));
+      setIsDroppingPin(false);
+      
+      // Reset cursor
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.getContainer().style.cursor = '';
+      }
+
+      // Add or update pin marker
+      if (selectedPin) {
+        mapInstanceRef.current.removeLayer(selectedPin);
+      }
+      
+      const pinIcon = L.divIcon({
+        html: '<div style="background: #ef4444; width: 20px; height: 20px; border-radius: 50% 50% 50% 0; border: 2px solid white; transform: rotate(-45deg); box-shadow: 0 2px 8px rgba(0,0,0,0.3);"></div>',
+        className: '',
+        iconSize: [20, 20],
+        iconAnchor: [10, 20],
+      });
+
+      const newPin = L.marker([lat, lng], { icon: pinIcon }).addTo(mapInstanceRef.current);
+      setSelectedPin(newPin);
+    }
+  }, [isDroppingPin, selectedPin]);
+
   useEffect(() => {
     // Initialize map
     if (!mapInstanceRef.current) {
@@ -207,6 +239,9 @@ const FacilitiesMap = () => {
         attribution: '© OpenStreetMap contributors',
         maxZoom: 19,
       }).addTo(mapInstanceRef.current);
+
+      // Add click event listener for pin dropping
+      mapInstanceRef.current.on('click', handleMapClick);
 
       // Initialize layer groups
       markersRef.current = {
@@ -284,7 +319,7 @@ const FacilitiesMap = () => {
         mapInstanceRef.current = null;
       }
     };
-  }, [processFacilities]);
+  }, [processFacilities, handleMapClick]);
 
 
   const toggleLayer = (category) => {
@@ -318,12 +353,33 @@ const FacilitiesMap = () => {
     other_schools: '#14b8a6',
   };
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
     setAnalyzing(true);
+    console.log(latitude, longitude, radius);
     // Simulate analysis process
-    setTimeout(() => {
-      setAnalyzing(false);
-    }, 3000);
+    await analyze({lat: latitude, lon: longitude}, radius);
+    setAnalyzing(false);
+  };
+
+  const handleDropPin = () => {
+    setIsDroppingPin(true);
+    // Change cursor to indicate pin dropping mode
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.getContainer().style.cursor = 'crosshair';
+    }
+  };
+
+  const clearPin = () => {
+    if (selectedPin) {
+      mapInstanceRef.current.removeLayer(selectedPin);
+      setSelectedPin(null);
+    }
+    setLatitude('');
+    setLongitude('');
+    setIsDroppingPin(false);
+    if (mapInstanceRef.current) {
+      mapInstanceRef.current.getContainer().style.cursor = '';
+    }
   };
 
   return (
@@ -382,27 +438,44 @@ const FacilitiesMap = () => {
               />
             </div>
 
-            <label className="field-label">Coordinates</label>
-            <div className="coordinate-group">
-              <div className="coordinate-field">
-                <span>Lat</span>
-                <input
-                  type="text"
-                  placeholder="e.g. 49.2827"
-                  value={latitude}
-                  onChange={(e) => setLatitude(e.target.value)}
-                />
-              </div>
-              <div className="coordinate-field">
-                <span>Long</span>
-                <input
-                  type="text"
-                  placeholder="e.g. -123.1207"
-                  value={longitude}
-                  onChange={(e) => setLongitude(e.target.value)}
-                />
-              </div>
-            </div>
+             <label className="field-label">Location</label>
+             <div className="pin-controls">
+               <button
+                 type="button"
+                 onClick={handleDropPin}
+                 disabled={isDroppingPin}
+                 className={`drop-pin-button ${isDroppingPin ? 'active' : ''}`}
+               >
+                 {isDroppingPin ? (
+                   <>
+                     <div className="spinner"></div>
+                     Click on map...
+                   </>
+                 ) : (
+                   '📍 Drop Pin'
+                 )}
+               </button>
+               
+               {(latitude && longitude) && (
+                 <div className="selected-coordinates">
+                   <div className="coordinate-display">
+                     <span className="coord-label">Lat:</span>
+                     <span className="coord-value">{latitude}</span>
+                   </div>
+                   <div className="coordinate-display">
+                     <span className="coord-label">Lng:</span>
+                     <span className="coord-value">{longitude}</span>
+                   </div>
+                   <button
+                     type="button"
+                     onClick={clearPin}
+                     className="clear-pin-button"
+                   >
+                     ✕
+                   </button>
+                 </div>
+               )}
+             </div>
 
             <label className="field-label">Radius (m)</label>
             <div className="radius-control">
