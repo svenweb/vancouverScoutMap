@@ -1226,6 +1226,8 @@ const FacilitiesMap = () => {
             source: 'hourly',
           };
         }
+        return;
+      }
 
         if (!selectedWeather && weatherData?.current_weather) {
           selectedWeather = {
