@@ -68,16 +68,16 @@ const decodeBase64 = (value) => {
   }
 
   try {
-    if (typeof globalThis !== 'undefined' && typeof globalThis.atob === 'function') {
-      return globalThis.atob(value);
+    if (typeof atob === 'function') {
+      return atob(value);
     }
   } catch (err) {
     // Ignore environment decoding errors and fall back to other strategies.
   }
 
   try {
-    if (typeof globalThis !== 'undefined' && typeof globalThis.Buffer === 'function') {
-      return globalThis.Buffer.from(value, 'base64').toString('utf-8');
+    if (typeof Buffer !== 'undefined' && typeof Buffer.from === 'function') {
+      return Buffer.from(value, 'base64').toString('utf-8');
     }
   } catch (err) {
     // Ignore decoding errors and return an empty string.
@@ -1345,7 +1345,7 @@ const FacilitiesMap = () => {
       }
 
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${geminiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiKey}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
